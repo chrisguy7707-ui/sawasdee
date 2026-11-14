@@ -1,0 +1,2886 @@
+//! The application: state, saving, and every screen.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use chrono::Datelike;
+use eframe::egui::{
+    self, vec2, Align, Align2, Color32, CornerRadius, CursorIcon, Key, Layout, Margin, Pos2, Rect, RichText, Sense,
+    Stroke, StrokeKind, Ui, Vec2,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::audio::Audio;
+use crate::data::{CONSONANTS, LESSONS_PER_UNIT, TONES, UNITS, VOWELS};
+use crate::kit::*;
+use crate::lesson::{self, Body, Exercise, LessonKind, Rng};
+
+/// Right answers in a row that take a question out of the mistake notebook.
+const GRADUATE: u8 = 2;
+
+/// The app's version (from the project settings).
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const STORE_KEY: &str = "progress_v1";
+
+fn today() -> i32 {
+    chrono::Local::now().date_naive().num_days_from_ce()
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------- saved progress
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct Progress {
+    pub done: Vec<u8>,
+    pub xp_total: u32,
+    pub xp_by_day: BTreeMap<i32, u32>,
+    pub streak: u32,
+    pub best_streak: u32,
+    pub last_day: i32,
+    pub daily_goal: u32,
+    pub lessons_done: u32,
+    pub perfect_lessons: u32,
+    pub muted: bool,
+    /// 0 = not chosen yet, 1 = male speech (ครับ/ผม), 2 = female speech (ค่ะ/ฉัน).
+    pub gender: u8,
+    /// Questions answered wrongly, kept until answered right twice in a row.
+    pub notebook: Vec<Mistake>,
+    /// Memory of each course word, keyed "unit-word".
+    pub stats: BTreeMap<String, WordStat>,
+    /// 0 = follow the computer, 1 = light, 2 = dark.
+    pub theme: u8,
+}
+
+/// One entry of the mistake notebook: a word or a sentence answered wrongly.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct Mistake {
+    pub unit: usize,
+    pub item: usize,
+    pub sentence: bool,
+    pub wrong: u32,
+    /// Right answers in a row since the last mistake.
+    pub streak: u8,
+    pub last_day: i32,
+}
+
+/// How well a word is remembered (simple spaced repetition).
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct WordStat {
+    pub level: u8,
+    pub due: i32,
+    pub right: u32,
+    pub wrong: u32,
+}
+
+/// Days until a word comes back, by memory level.
+const INTERVALS: [i32; 7] = [0, 1, 2, 4, 7, 14, 30];
+
+fn wkey(u: usize, i: usize) -> String {
+    format!("{u}-{i}")
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Progress {
+            done: vec![0; UNITS.len()],
+            xp_total: 0,
+            xp_by_day: BTreeMap::new(),
+            streak: 0,
+            best_streak: 0,
+            last_day: i32::MIN / 2,
+            daily_goal: 20,
+            lessons_done: 0,
+            perfect_lessons: 0,
+            muted: false,
+            gender: 0,
+            notebook: Vec::new(),
+            stats: BTreeMap::new(),
+            theme: 0,
+        }
+    }
+}
+
+impl Progress {
+    fn fix(&mut self) {
+        self.done.resize(UNITS.len(), 0);
+        for d in &mut self.done {
+            *d = (*d).min(LESSONS_PER_UNIT as u8);
+        }
+        self.notebook.retain(|m| m.unit < UNITS.len() && if m.sentence { m.item < UNITS[m.unit].sentences.len() } else { m.item < UNITS[m.unit].words.len() });
+    }
+
+    pub fn streak_now(&self) -> u32 {
+        let t = today();
+        if self.last_day == t || self.last_day == t - 1 {
+            self.streak
+        } else {
+            0
+        }
+    }
+
+    fn xp_today(&self) -> u32 {
+        *self.xp_by_day.get(&today()).unwrap_or(&0)
+    }
+
+    /// The unit and lesson the learner is on now (None when the course is finished).
+    pub fn current(&self) -> Option<(usize, usize)> {
+        self.done.iter().enumerate().find(|(_, d)| (**d as usize) < LESSONS_PER_UNIT).map(|(u, d)| (u, *d as usize))
+    }
+
+    fn words_learned(&self) -> usize {
+        UNITS
+            .iter()
+            .enumerate()
+            .map(|(u, unit)| {
+                let d = self.done[u] as usize;
+                if d >= 2 {
+                    unit.words.len()
+                } else if d == 1 {
+                    5.min(unit.words.len())
+                } else {
+                    0
+                }
+            })
+            .sum()
+    }
+
+    fn word_learned(&self, unit: usize, word: usize) -> bool {
+        (self.done[unit] as usize) > word / 5
+    }
+
+    /// Start at a later level: earlier units count as done (moves forward only).
+    fn skip_to(&mut self, first_unit: usize) {
+        for u in 0..first_unit.min(UNITS.len()) {
+            self.done[u] = LESSONS_PER_UNIT as u8;
+        }
+    }
+
+    /// Put a wrongly answered word or sentence into the mistake notebook.
+    fn note_wrong(&mut self, unit: usize, item: usize, sentence: bool) {
+        let t = today();
+        if let Some(m) = self.notebook.iter_mut().find(|m| m.unit == unit && m.item == item && m.sentence == sentence) {
+            m.wrong += 1;
+            m.streak = 0;
+            m.last_day = t;
+        } else {
+            self.notebook.push(Mistake { unit, item, sentence, wrong: 1, streak: 0, last_day: t });
+        }
+    }
+
+    /// A right answer: returns true when the entry graduates out of the notebook.
+    fn note_right(&mut self, unit: usize, item: usize, sentence: bool) -> bool {
+        if let Some(pos) = self.notebook.iter().position(|m| m.unit == unit && m.item == item && m.sentence == sentence) {
+            let m = &mut self.notebook[pos];
+            m.streak += 1;
+            if m.streak >= GRADUATE {
+                self.notebook.remove(pos);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Notebook entries, most needed first.
+    fn notebook_order(&self) -> Vec<(usize, usize, bool)> {
+        let mut list: Vec<&Mistake> = self.notebook.iter().collect();
+        list.sort_by_key(|m| (m.streak, std::cmp::Reverse(m.wrong), m.last_day));
+        list.into_iter().map(|m| (m.unit, m.item, m.sentence)).collect()
+    }
+
+    fn female(&self) -> bool {
+        self.gender == 2
+    }
+
+    /// Record an answer for a word.
+    fn record(&mut self, (u, i): (usize, usize), right: bool) {
+        let t = today();
+        let st = self.stats.entry(wkey(u, i)).or_insert(WordStat { level: 0, due: t, right: 0, wrong: 0 });
+        if right {
+            st.right += 1;
+            if st.due <= t {
+                st.level = (st.level + 1).min(INTERVALS.len() as u8 - 1);
+                st.due = t + INTERVALS[st.level as usize];
+            }
+        } else {
+            st.wrong += 1;
+            st.level = 0;
+            st.due = t;
+        }
+    }
+
+    pub fn stat(&self, u: usize, i: usize) -> Option<&WordStat> {
+        self.stats.get(&wkey(u, i))
+    }
+
+    /// Learned words in the order they most need practice.
+    fn review_order(&self) -> Vec<(usize, usize)> {
+        let t = today();
+        let mut list: Vec<((bool, u8, i64), (usize, usize))> = Vec::new();
+        for (u, unit) in UNITS.iter().enumerate() {
+            for i in 0..unit.words.len() {
+                if !self.word_learned(u, i) {
+                    continue;
+                }
+                let (due, level, wrong) = match self.stat(u, i) {
+                    Some(s) => (s.due <= t, s.level, s.wrong as i64),
+                    None => (true, 0, 0),
+                };
+                list.push(((!due, level, -wrong), (u, i)));
+            }
+        }
+        list.sort_by_key(|(k, _)| *k);
+        list.into_iter().map(|(_, w)| w).collect()
+    }
+
+    /// How many learned words are due for review today.
+    fn due_count(&self) -> usize {
+        let t = today();
+        UNITS
+            .iter()
+            .enumerate()
+            .flat_map(|(u, unit)| (0..unit.words.len()).map(move |i| (u, i)))
+            .filter(|&(u, i)| self.word_learned(u, i) && self.stat(u, i).map(|s| s.due <= t).unwrap_or(true))
+            .count()
+    }
+}
+
+// ---------------------------------------------------------------- lesson run
+
+#[derive(Default)]
+struct ExState {
+    selected: Option<usize>,
+    placed: Vec<usize>,
+    m_left: Option<usize>,
+    m_right: Option<usize>,
+    matched_left: Vec<bool>,
+    matched_right: Vec<bool>,
+    wrong_pair: Option<(usize, usize, f64)>,
+    match_wrong: usize,
+    match_bad: Vec<usize>,
+    spoke: bool,
+    /// Flip card shows its meaning.
+    flipped: bool,
+}
+
+struct Run {
+    kind: LessonKind,
+    queue: Vec<(Exercise, bool)>,
+    pos: usize,
+    first_total: usize,
+    first_right: usize,
+    mistakes: usize,
+    combo: u32,
+    st: ExState,
+    feedback: Option<bool>,
+    started: f64,
+    /// Solutions of the questions missed in this lesson, for the summary.
+    missed: Vec<String>,
+    confirm_quit: bool,
+    /// Shown after a right answer that differs from the main one.
+    note: Option<String>,
+    /// Notebook entries that graduated during this lesson.
+    graduated: usize,
+}
+
+impl Run {
+    fn ex(&self) -> &Exercise {
+        &self.queue[self.pos].0
+    }
+}
+
+struct Summary {
+    xp: u32,
+    accuracy: u32,
+    secs: u32,
+    practice: bool,
+    review: bool,
+    streak_up: Option<u32>,
+    unit_finished: Option<usize>,
+    /// Solutions of questions missed in this lesson.
+    missed: Vec<String>,
+    mistake_review: bool,
+    /// Notebook entries that graduated in this lesson.
+    graduated: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Learn,
+    Letters,
+    Words,
+    Notebook,
+    Profile,
+}
+
+struct Shot {
+    path: PathBuf,
+    frames: u32,
+    requested: bool,
+    done: Arc<AtomicBool>,
+}
+
+pub struct App {
+    p: Progress,
+    tab: Tab,
+    /// Letters tab page: 0 consonants, 1 vowels, 2 tones.
+    letters_page: u8,
+    /// Choices on the first-run welcome screen.
+    welcome_gender: u8,
+    welcome_level: usize,
+    run: Option<Run>,
+    summary: Option<Summary>,
+    audio: Audio,
+    rng: Rng,
+    shot: Option<Shot>,
+    toast: Option<(String, f64)>,
+    confirm_reset: bool,
+    confirm_exit: bool,
+    theme_applied: bool,
+    /// The opening (cover) screen, shown until the learner taps start.
+    splash: bool,
+    splash_t0: Option<f64>,
+    /// Test switch (`--open phone-...`): draw the phone layout in a big window.
+    force_narrow: bool,
+    frames: u32,
+    /// Draws only the app icon (used once to make the Android launcher icon).
+    icon_mode: bool,
+}
+
+// ---------------------------------------------------------------- fonts
+
+/// Fonts are bundled inside the app, so Thai and Korean look the same on every
+/// computer and phone (no system fonts needed).
+static KO_REGULAR: &[u8] = include_bytes!("../assets/fonts/NotoSansKR-Regular.otf");
+static KO_BOLD: &[u8] = include_bytes!("../assets/fonts/NotoSansKR-Bold.otf");
+static TH_VARIABLE: &[u8] = include_bytes!("../assets/fonts/NotoSansThai-Variable.ttf");
+
+fn setup_fonts(ctx: &egui::Context) {
+    let mut defs = egui::FontDefinitions::default();
+    let mut add = |name: &str, bytes: &'static [u8], weight: Option<f32>| {
+        let mut fd = egui::FontData::from_static(bytes);
+        if let Some(w) = weight {
+            fd.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", w)]);
+        }
+        defs.font_data.insert(name.to_string(), Arc::new(fd));
+    };
+    add("th", TH_VARIABLE, Some(450.0));
+    add("th_b", TH_VARIABLE, Some(700.0));
+    add("ko", KO_REGULAR, None);
+    add("ko_b", KO_BOLD, None);
+    let defaults = defs.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+    let mut prop = vec!["th".to_string(), "ko".to_string()];
+    prop.extend(defaults.iter().cloned());
+    let mut b = vec!["th_b".to_string(), "ko_b".to_string(), "th".to_string(), "ko".to_string()];
+    b.extend(defaults.iter().cloned());
+    defs.families.insert(egui::FontFamily::Proportional, prop);
+    defs.families.insert(egui::FontFamily::Name("bold".into()), b);
+    if let Some(mono) = defs.families.get_mut(&egui::FontFamily::Monospace) {
+        mono.extend(["th".to_string(), "ko".to_string()]);
+    }
+    ctx.set_fonts(defs);
+}
+
+/// Apply the light or dark colours to egui's own widgets (tooltips, scroll bars...).
+fn apply_theme(ctx: &egui::Context, dark: bool) {
+    set_dark(dark);
+    let theme = if dark { egui::Theme::Dark } else { egui::Theme::Light };
+    ctx.set_theme(theme);
+    ctx.style_mut_of(theme, |s| {
+        s.visuals.panel_fill = bg();
+        s.visuals.window_fill = surface();
+        s.visuals.window_stroke = Stroke::new(1.0, border());
+        s.visuals.override_text_color = Some(fg());
+        s.interaction.selectable_labels = false;
+        s.spacing.item_spacing = vec2(8.0, 8.0);
+        s.spacing.scroll.bar_width = 8.0;
+        s.text_styles.insert(egui::TextStyle::Body, font(15.0));
+        s.text_styles.insert(egui::TextStyle::Button, font(15.0));
+    });
+}
+
+// ---------------------------------------------------------------- app
+
+impl App {
+    pub fn new(cc: &eframe::CreationContext<'_>, shot: Option<PathBuf>, open: Option<String>) -> Self {
+        setup_fonts(&cc.egui_ctx);
+        apply_theme(&cc.egui_ctx, false);
+        let mut p: Progress = if shot.is_none() {
+            cc.storage.and_then(|s| eframe::get_value(s, STORE_KEY)).unwrap_or_default()
+        } else {
+            Progress::default()
+        };
+        p.fix();
+        let seed = if shot.is_some() { 7 } else { now_secs() as u64 };
+        let muted = p.muted || shot.is_some();
+        let mut app = App {
+            p,
+            tab: Tab::Learn,
+            letters_page: 0,
+            welcome_gender: 0,
+            welcome_level: 0,
+            run: None,
+            summary: None,
+            audio: Audio::new(muted),
+            rng: Rng::new(seed),
+            shot: shot.map(|path| Shot { path, frames: 0, requested: false, done: Arc::new(AtomicBool::new(false)) }),
+            toast: None,
+            confirm_reset: false,
+            confirm_exit: false,
+            theme_applied: false,
+            splash: false,
+            splash_t0: None,
+            frames: 0,
+            icon_mode: open.as_deref() == Some("icon"),
+            force_narrow: open.as_deref().map(|o| o.starts_with("phone")).unwrap_or(false),
+        };
+        app.splash = app.shot.is_none() || open.as_deref() == Some("splash");
+        // Screenshots show the app as set up, unless the welcome screen is asked for.
+        if app.shot.is_some() && open.as_deref() != Some("welcome") {
+            app.p.gender = 1;
+        }
+        // Demo states, used for checking screens.
+        if let Some(o) = open.as_deref() {
+            match o {
+                "letters" | "phone-letters" => app.tab = Tab::Letters,
+                "dark" => app.p.theme = 2,
+                "dark-lesson" => {
+                    app.p.theme = 2;
+                    app.start(LessonKind::Normal { unit: 0, lesson: 0 }, 0.0);
+                    if let Some(run) = app.run.as_mut() {
+                        run.pos = 8.min(run.queue.len() - 1);
+                        run.st.placed = vec![0, 1];
+                    }
+                }
+                "tones" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 2;
+                }
+                "words" => app.tab = Tab::Words,
+                "profile" => app.tab = Tab::Profile,
+                "notebook" => {
+                    app.tab = Tab::Notebook;
+                    app.p.done[0] = 2;
+                    for (u, i, sen) in [(0usize, 6usize, false), (0, 3, true), (0, 1, false), (0, 8, false)] {
+                        app.p.note_wrong(u, i, sen);
+                    }
+                    app.p.note_wrong(0, 6, false);
+                    app.p.note_right(0, 1, false);
+                }
+                "lesson" | "tiles" | "match" | "feedback" | "tone" | "flash" | "flash-back" | "spell" | "fill" | "shadow" | "wrong" => {
+                    app.start(if o == "fill" { LessonKind::Normal { unit: 1, lesson: 2 } } else { LessonKind::Normal { unit: 0, lesson: if o == "shadow" { 1 } else { 0 } } }, 0.0);
+                    if let Some(run) = app.run.as_mut() {
+                        let want = match o {
+                            "tiles" => 13,
+                            "match" => 11,
+                            "tone" => 9,
+                            "feedback" | "wrong" => 5,
+                            "spell" => 10,
+                            "fill" => 5,
+                            "shadow" => 13,
+                            _ => 0,
+                        };
+                        run.pos = want.min(run.queue.len() - 1);
+                        if o == "flash-back" {
+                            run.st.flipped = true;
+                        }
+                        if o == "spell" {
+                            run.st.placed = vec![0];
+                        }
+                        if o == "tiles" {
+                            run.st.placed = vec![0, 1];
+                        }
+                        if o == "wrong" {
+                            run.st.selected = Some(0);
+                            run.feedback = Some(false);
+                            run.note = None;
+                        }
+                        if o == "feedback" {
+                            run.st.selected = Some(0);
+                            run.feedback = Some(matches!(run.ex().body, Body::Choice { correct: 0, .. }));
+                        }
+                    }
+                }
+                "summary" => {
+                    app.summary = Some(Summary {
+                        xp: 15,
+                        accuracy: 80,
+                        secs: 154,
+                        practice: false,
+                        review: false,
+                        streak_up: Some(1),
+                        unit_finished: None,
+                        missed: vec!["ขอโทษ = 죄송합니다".into(), "สวัสดีครับ (싸왓디 크랍)".into()],
+                        mistake_review: false,
+                        graduated: 0,
+                    })
+                }
+                _ => {}
+            }
+        }
+        app
+    }
+
+    fn toast(&mut self, text: &str, now: f64) {
+        self.toast = Some((text.to_string(), now));
+    }
+
+    fn build(&mut self, kind: LessonKind) -> Vec<Exercise> {
+        let focus = self.p.review_order();
+        let mistakes = self.p.notebook_order();
+        let ctx = lesson::Ctx { tts: self.audio.available(), female: self.p.female(), focus: &focus, mistakes: &mistakes };
+        lesson::build(kind, &mut self.rng, &ctx)
+    }
+
+    fn start(&mut self, kind: LessonKind, now: f64) {
+        let ex = self.build(kind);
+        let n = ex.len();
+        self.run = Some(Run {
+            kind,
+            queue: ex.into_iter().map(|e| (e, false)).collect(),
+            pos: 0,
+            first_total: n,
+            first_right: 0,
+            mistakes: 0,
+            combo: 0,
+            st: ExState::default(),
+            feedback: None,
+            started: now,
+            missed: Vec::new(),
+            graduated: 0,
+            confirm_quit: false,
+            note: None,
+        });
+        self.summary = None;
+    }
+
+    fn try_start(&mut self, unit: usize, lesson: usize, now: f64) {
+        self.start(LessonKind::Normal { unit, lesson }, now);
+    }
+
+    fn finish(&mut self, run: Run, now: f64) {
+        let t = today();
+        let (xp, practice, review) = match run.kind {
+            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters => (5 + run.first_right.min(5) as u32, true, false),
+            LessonKind::Normal { lesson, .. } => {
+                let base = if lesson == LESSONS_PER_UNIT - 1 { 20 } else { 10 };
+                (base + if run.mistakes == 0 { 5 } else { 0 }, false, lesson == LESSONS_PER_UNIT - 1)
+            }
+        };
+        let mut unit_finished = None;
+        if let LessonKind::Normal { unit, lesson } = run.kind {
+            if lesson == self.p.done[unit] as usize {
+                self.p.done[unit] += 1;
+                if self.p.done[unit] as usize == LESSONS_PER_UNIT {
+                    unit_finished = Some(unit);
+                }
+            }
+        }
+        let streak_up = if self.p.last_day == t {
+            None
+        } else {
+            self.p.streak = if self.p.last_day == t - 1 { self.p.streak + 1 } else { 1 };
+            self.p.last_day = t;
+            self.p.best_streak = self.p.best_streak.max(self.p.streak);
+            Some(self.p.streak)
+        };
+        self.p.xp_total += xp;
+        *self.p.xp_by_day.entry(t).or_insert(0) += xp;
+        self.p.lessons_done += 1;
+        if run.mistakes == 0 && !practice {
+            self.p.perfect_lessons += 1;
+        }
+        let accuracy = if run.first_total == 0 { 100 } else { (run.first_right * 100 / run.first_total) as u32 };
+        self.summary = Some(Summary {
+            xp,
+            accuracy,
+            secs: (now - run.started).max(0.0) as u32,
+            practice,
+            review,
+            streak_up,
+            unit_finished,
+            missed: run.missed.clone(),
+            mistake_review: run.kind == LessonKind::Mistakes,
+            graduated: run.graduated,
+        });
+        self.audio.effect(true);
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        // light / dark
+        let want_dark = match self.p.theme {
+            1 => false,
+            2 => true,
+            _ => ctx.system_theme() == Some(egui::Theme::Dark),
+        };
+        if want_dark != is_dark() || !self.theme_applied {
+            apply_theme(&ctx, want_dark);
+            self.theme_applied = true;
+        }
+        self.handle_shot(&ctx);
+        // Make sure the window really is the portrait (phone) size at the start.
+        self.frames += 1;
+        if self.frames <= 3 {
+            log::info!("frame {} size {:?}", self.frames, ctx.content_rect());
+        }
+        if self.frames == 2 {
+            let args: Vec<String> = std::env::args().collect();
+            let size = args
+                .iter()
+                .position(|a| a == "--size")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|v| {
+                    let (w, h) = v.split_once('x')?;
+                    Some(vec2(w.parse().ok()?, h.parse().ok()?))
+                })
+                .unwrap_or(vec2(430.0, 880.0));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        }
+
+        // Phones: keep clear of the status bar (top) and the gesture bar (bottom).
+        #[cfg(target_os = "android")]
+        {
+            let band = if self.splash || !is_dark() { Color32::from_rgb(14, 120, 108) } else { bg() };
+            egui::Panel::top("android_top").exact_size(38.0).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
+            egui::Panel::bottom("android_bottom").exact_size(16.0).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
+        }
+        if self.icon_mode {
+            egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(Color32::from_rgb(20, 170, 150))).show(ui, |ui| {
+                let r = ui.max_rect();
+                let p = ui.painter();
+                let c = r.center();
+                p.circle_filled(c + vec2(0.0, r.width() * 0.62), r.width() * 0.5, Color32::from_rgb(14, 130, 115));
+                paint_mascot(p, c + vec2(0.0, -r.width() * 0.04), r.width() * 0.2, true);
+            });
+        } else if self.splash {
+            self.splash_screen(ui, now);
+        } else if self.p.gender == 0 {
+            self.welcome_screen(ui);
+        } else if self.run.is_some() {
+            self.lesson_screen(ui, now);
+        } else if self.summary.is_some() {
+            self.summary_screen(ui, now);
+        } else {
+            self.main_screen(ui, now);
+        }
+        self.paint_toast(&ctx, now);
+        ctx.request_repaint_after(std::time::Duration::from_millis(33));
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if self.shot.is_none() {
+            self.p.muted = self.audio.muted;
+            eframe::set_value(storage, STORE_KEY, &self.p);
+        }
+    }
+
+    fn auto_save_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(5)
+    }
+
+    fn persist_egui_memory(&self) -> bool {
+        self.shot.is_none()
+    }
+
+    fn clear_color(&self, _v: &egui::Visuals) -> [f32; 4] {
+        bg().to_normalized_gamma_f32()
+    }
+}
+
+// ---------------------------------------------------------------- screenshot
+
+impl App {
+    fn handle_shot(&mut self, ctx: &egui::Context) {
+        let Some(shot) = self.shot.as_mut() else { return };
+        shot.frames += 1;
+        ctx.request_repaint();
+        if shot.done.load(Ordering::SeqCst) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if shot.frames >= 120 && (!shot.requested || shot.frames % 60 == 0) {
+            shot.requested = true;
+            let path = shot.path.clone();
+            let done = shot.done.clone();
+            let ctx2 = ctx.clone();
+            ctx.request_screenshot(move |img| {
+                let [w, h] = img.size;
+                let mut bytes = Vec::with_capacity(w * h * 4);
+                for px in &img.pixels {
+                    bytes.extend_from_slice(&px.to_srgba_unmultiplied());
+                }
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if let Some(buf) = image::RgbaImage::from_raw(w as u32, h as u32, bytes) {
+                    match buf.save(&path) {
+                        Ok(()) => eprintln!("screenshot saved to {}", path.display()),
+                        Err(e) => eprintln!("screenshot failed: {e}"),
+                    }
+                }
+                done.store(true, Ordering::SeqCst);
+                ctx2.request_repaint();
+            });
+        }
+        if shot.frames > 1200 {
+            eprintln!("screenshot timed out");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn paint_toast(&mut self, ctx: &egui::Context, now: f64) {
+        let Some((text, t0)) = self.toast.clone() else { return };
+        let age = now - t0;
+        if age > 3.0 {
+            self.toast = None;
+            return;
+        }
+        let alpha = ((3.0 - age).min(0.3) / 0.3) as f32;
+        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("toast")));
+        let screen = ctx.content_rect();
+        let g = p.layout_no_wrap(text, bold(15.0), WHITE);
+        let size = g.size() + vec2(36.0, 22.0);
+        let rect = Rect::from_center_size(Pos2::new(screen.center().x, screen.bottom() - 60.0), size);
+        p.rect_filled(rect, CornerRadius::same(14), Color32::from_rgba_unmultiplied(50, 55, 65, (235.0 * alpha) as u8));
+        p.galley(rect.center() - g.size() / 2.0, g, WHITE);
+    }
+}
+
+// ---------------------------------------------------------------- main layout
+
+impl App {
+    /// Phone layout: a slim top bar with the stats and a tab bar at the bottom.
+    fn mobile_bars(&mut self, ui: &mut Ui) {
+        egui::Panel::top("m_top")
+            .exact_size(52.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(surface()).inner_margin(Margin::symmetric(12, 6)))
+            .show(ui, |ui| {
+                self.stat_row(ui);
+            });
+        egui::Panel::bottom("m_tabs")
+            .exact_size(64.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(surface()))
+            .show(ui, |ui| {
+                let full = ui.max_rect();
+                ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(2.0, border()));
+                let tabs = [(Tab::Learn, "학습"), (Tab::Letters, "문자"), (Tab::Words, "단어장"), (Tab::Notebook, "오답"), (Tab::Profile, "내 정보")];
+                let w = full.width() / tabs.len() as f32;
+                for (k, (tab, label)) in tabs.iter().enumerate() {
+                    let r = Rect::from_min_size(Pos2::new(full.left() + w * k as f32, full.top() + 2.0), vec2(w, full.height() - 2.0));
+                    let resp = ui.interact(r, ui.scope_id().with(("mtab", k)), Sense::click());
+                    let sel = self.tab == *tab;
+                    let p = ui.painter();
+                    let col = if sel { PRIMARY } else { muted() };
+                    let ic = Pos2::new(r.center().x, r.top() + 20.0);
+                    match tab {
+                        Tab::Learn => paint_star(p, ic, 11.0, if sel { GOLD } else { col }),
+                        Tab::Letters => {
+                            p.text(ic, Align2::CENTER_CENTER, "ก", bold(20.0), col);
+                        }
+                        Tab::Words => {
+                            p.text(ic, Align2::CENTER_CENTER, "가", bold(18.0), col);
+                        }
+                        Tab::Notebook => paint_note(p, ic, 20.0, if sel { RED } else { col }),
+                        Tab::Profile => {
+                            p.circle_filled(ic + vec2(0.0, -4.0), 5.0, col);
+                            p.circle_filled(ic + vec2(0.0, 9.0), 8.0, col);
+                            p.rect_filled(Rect::from_min_size(ic + vec2(-10.0, 9.0), vec2(20.0, 10.0)), CornerRadius::ZERO, surface());
+                        }
+                    }
+                    p.text(Pos2::new(r.center().x, r.bottom() - 14.0), Align2::CENTER_CENTER, *label, bold(12.0), col);
+                    if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                        self.tab = *tab;
+                    }
+                }
+            });
+    }
+
+    /// Compact home cards for the phone layout: daily goal, review, mistake notebook.
+    fn mobile_cards(&mut self, ui: &mut Ui, now: f64, w: f32) {
+        let xp = self.p.xp_today();
+        let goal = self.p.daily_goal;
+        card_frame().inner_margin(Margin::symmetric(14, 12)).show(ui, |ui| {
+            ui.set_width(w - 32.0);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                paint_bolt(ui.painter(), r.center(), 30.0, GOLD);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(format!("오늘의 목표 · XP {} / {}", xp.min(goal), goal)).font(bold(15.0)));
+                    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
+                    progress_bar(ui.painter(), r, xp as f32 / goal as f32, GOLD);
+                });
+            });
+        });
+        ui.add_space(8.0);
+        let due = self.p.due_count();
+        let n = self.p.notebook.len();
+        let half = (w - 8.0) / 2.0;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if self.p.words_learned() > 0 {
+                let label = if due > 0 { format!("약한 단어 복습 ({})", due) } else { "복습하기".to_string() };
+                if button3d(ui, &label, vec2(half, 46.0), BLUE, true).clicked() {
+                    self.start(LessonKind::Practice, now);
+                }
+            }
+            if n > 0 {
+                if button3d(ui, &format!("오답 노트 ({})", n), vec2(half, 46.0), RED, true).clicked() {
+                    self.start(LessonKind::Mistakes, now);
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    /// The cover screen.
+    fn splash_screen(&mut self, ui: &mut Ui, now: f64) {
+        let t0 = *self.splash_t0.get_or_insert(now);
+        let t = (now - t0) as f32;
+        let mut go = false;
+        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(Color32::from_rgb(14, 120, 108))).show(ui, |ui| {
+            let r = ui.max_rect();
+            let p = ui.painter().clone();
+            let p = &p;
+            // soft background circles
+            p.circle_filled(r.left_top() + vec2(r.width() * 0.15, r.height() * 0.2), r.width().min(r.height()) * 0.35, Color32::from_rgba_unmultiplied(255, 255, 255, 10));
+            p.circle_filled(r.right_bottom() - vec2(r.width() * 0.1, r.height() * 0.15), r.width().min(r.height()) * 0.45, Color32::from_rgba_unmultiplied(255, 255, 255, 12));
+            // floating Thai letters
+            for (k, ch) in ["ก", "ข", "ส", "ม", "ว", "ด", "น", "ร"].iter().enumerate() {
+                let fx = (k as f32 * 0.137 + 0.08) % 1.0;
+                let bob = (t * 0.8 + k as f32 * 1.3).sin() * 10.0;
+                let y = r.top() + r.height() * (0.1 + 0.8 * ((k * 5 % 8) as f32 / 8.0)) + bob;
+                p.text(Pos2::new(r.left() + r.width() * fx, y), Align2::CENTER_CENTER, *ch, bold(46.0), Color32::from_rgba_unmultiplied(255, 255, 255, 22));
+            }
+            let cx = r.center().x;
+            let mut y = r.top() + r.height() * 0.5 - 190.0;
+            if y < r.top() + 10.0 {
+                y = r.top() + 10.0;
+            }
+            let bounce = (t * 2.2).sin() * 5.0;
+            paint_mascot(p, Pos2::new(cx, y + 90.0 + bounce), 70.0, true);
+            p.text(Pos2::new(cx, y + 215.0), Align2::CENTER_CENTER, "สวัสดี", bold(44.0), Color32::from_rgb(255, 224, 130));
+            p.text(Pos2::new(cx, y + 268.0), Align2::CENTER_CENTER, "사왓디", bold(54.0), WHITE);
+            p.text(Pos2::new(cx, y + 314.0), Align2::CENTER_CENTER, "한국인을 위한 태국어", font(18.0), Color32::from_white_alpha(220));
+            let bw = 320.0f32.min(r.width() - 60.0);
+            let btn = Rect::from_center_size(Pos2::new(cx, y + 392.0), vec2(bw, 56.0));
+            let mut ui_btn = ui.new_child(egui::UiBuilder::new().max_rect(btn));
+            if button3d(&mut ui_btn, "시작하기", vec2(bw, 56.0), Color32::from_rgb(255, 170, 40), true).clicked() {
+                go = true;
+            }
+            p.text(Pos2::new(cx, y + 452.0), Align2::CENTER_CENTER, "화면을 눌러도 시작돼요", font(13.0), Color32::from_white_alpha(170));
+            p.text(Pos2::new(cx, r.bottom() - 46.0), Align2::CENTER_CENTER, format!("버전 {}", APP_VERSION), font(13.0), Color32::from_white_alpha(150));
+        });
+        if go || (t > 0.4 && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space) || i.pointer.any_click())) {
+            self.splash = false;
+        }
+    }
+
+    fn main_screen(&mut self, ui: &mut Ui, now: f64) {
+        let width = ui.available_width();
+        let narrow = width < 760.0 || self.force_narrow;
+        if narrow {
+            self.mobile_bars(ui);
+        } else {
+            egui::Panel::left("nav")
+                .exact_size(220.0)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(egui::Frame::NONE.fill(surface()).inner_margin(Margin::symmetric(16, 22)))
+                .show(ui, |ui| self.nav(ui));
+        }
+        if width > 1050.0 {
+            egui::Panel::right("side")
+                .exact_size(330.0)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(egui::Frame::NONE.fill(bg()).inner_margin(Margin { left: 8, right: 24, top: 22, bottom: 16 }))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.side(ui, now));
+                });
+        }
+        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(bg())).show(ui, |ui| {
+            // line between nav and content
+            let r = ui.max_rect();
+            if !narrow {
+                ui.painter().line_segment([r.left_top(), r.left_bottom()], Stroke::new(2.0, border()));
+            }
+            match self.tab {
+                Tab::Learn => self.learn_tab(ui, now),
+                Tab::Letters => self.letters_tab(ui),
+                Tab::Words => self.words_tab(ui),
+                Tab::Notebook => self.notebook_tab(ui, now),
+                Tab::Profile => self.profile_tab(ui, now),
+            }
+        });
+    }
+
+    fn nav(&mut self, ui: &mut Ui) {
+        // logo
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
+        let p = ui.painter();
+        paint_mascot(p, Pos2::new(rect.left() + 28.0, rect.center().y - 4.0), 20.0, true);
+        p.text(Pos2::new(rect.left() + 62.0, rect.center().y - 12.0), Align2::LEFT_CENTER, "사왓디", bold(27.0), PRIMARY);
+        p.text(Pos2::new(rect.left() + 63.0, rect.center().y + 15.0), Align2::LEFT_CENTER, "한국인을 위한 태국어", font(12.5), muted());
+        ui.add_space(18.0);
+        let items = [(Tab::Learn, "학습"), (Tab::Letters, "태국 문자"), (Tab::Words, "단어장"), (Tab::Notebook, "오답 노트"), (Tab::Profile, "프로필")];
+        for (tab, label) in items {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
+            let sel = self.tab == tab;
+            let p = ui.painter();
+            if sel {
+                p.rect_filled(rect, CornerRadius::same(12), primary_soft());
+                p.rect_stroke(rect, CornerRadius::same(12), Stroke::new(2.0, lighten(PRIMARY, 0.45)), StrokeKind::Inside);
+            } else if resp.hovered() {
+                p.rect_filled(rect, CornerRadius::same(12), hover());
+            }
+            let ic = Pos2::new(rect.left() + 28.0, rect.center().y);
+            let col = if sel { PRIMARY } else { Color32::from_rgb(120, 125, 135) };
+            match tab {
+                Tab::Learn => paint_star(p, ic, 13.0, if sel { GOLD } else { col }),
+                Tab::Letters => {
+                    p.text(ic, Align2::CENTER_CENTER, "ก", bold(24.0), if sel { ORANGE } else { col });
+                }
+                Tab::Words => {
+                    let b = Rect::from_center_size(ic, vec2(22.0, 26.0));
+                    p.rect_filled(b, CornerRadius::same(4), if sel { BLUE } else { col });
+                    p.text(b.center(), Align2::CENTER_CENTER, "가", bold(12.0), WHITE);
+                }
+                Tab::Notebook => paint_note(p, ic, 26.0, if sel { RED } else { col }),
+                Tab::Profile => {
+                    let c = if sel { Color32::from_rgb(140, 100, 230) } else { col };
+                    p.circle_filled(ic + vec2(0.0, -6.0), 6.5, c);
+                    p.circle_filled(ic + vec2(0.0, 11.0), 11.0, c);
+                    p.rect_filled(Rect::from_min_size(ic + vec2(-13.0, 12.0), vec2(26.0, 12.0)), CornerRadius::ZERO, surface());
+                    if sel {
+                        p.rect_filled(Rect::from_min_size(ic + vec2(-13.0, 12.0), vec2(26.0, 12.0)), CornerRadius::ZERO, primary_soft());
+                    } else if resp.hovered() {
+                        p.rect_filled(Rect::from_min_size(ic + vec2(-13.0, 12.0), vec2(26.0, 12.0)), CornerRadius::ZERO, hover());
+                    }
+                }
+            }
+            p.text(Pos2::new(rect.left() + 56.0, rect.center().y), Align2::LEFT_CENTER, label, bold(16.0), if sel { PRIMARY } else { fg() });
+            if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                self.tab = tab;
+            }
+            ui.add_space(4.0);
+        }
+        // bottom: sound toggle
+        ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+            // order is bottom-up: quit, sound, then the theme switch above them
+            {
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+                let p = ui.painter();
+                if resp.hovered() {
+                    p.rect_filled(rect, CornerRadius::same(10), hover());
+                }
+                let c = Pos2::new(rect.left() + 26.0, rect.center().y);
+                p.circle_stroke(c, 8.0, Stroke::new(2.5, RED));
+                p.line_segment([c + vec2(0.0, -12.0), c + vec2(0.0, -2.0)], Stroke::new(2.5, surface()));
+                p.line_segment([c + vec2(0.0, -11.0), c + vec2(0.0, -1.0)], Stroke::new(2.5, RED));
+                p.text(Pos2::new(rect.left() + 50.0, rect.center().y), Align2::LEFT_CENTER, "앱 종료", font(14.0), muted());
+                if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                    self.tab = Tab::Profile;
+                    self.confirm_exit = true;
+                }
+            }
+            self.sound_row(ui);
+            let dark = is_dark();
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+            let p = ui.painter();
+            if resp.hovered() {
+                p.rect_filled(rect, CornerRadius::same(10), hover());
+            }
+            let c = Pos2::new(rect.left() + 26.0, rect.center().y);
+            if dark {
+                p.circle_filled(c, 9.0, GOLD);
+                p.circle_filled(c + vec2(5.0, -4.0), 8.0, if resp.hovered() { hover() } else { surface() });
+            } else {
+                p.circle_filled(c, 6.0, ORANGE);
+                for k in 0..8 {
+                    let a = k as f32 * std::f32::consts::TAU / 8.0;
+                    let d = vec2(a.cos(), a.sin());
+                    p.line_segment([c + d * 8.5, c + d * 11.5], Stroke::new(2.0, ORANGE));
+                }
+            }
+            let label = if dark { "다크 모드" } else { "라이트 모드" };
+            p.text(Pos2::new(rect.left() + 50.0, rect.center().y), Align2::LEFT_CENTER, label, font(14.0), muted());
+            if resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("눌러서 화면 밝기를 바꿔요").clicked() {
+                self.p.theme = if dark { 1 } else { 2 };
+            }
+        });
+    }
+
+    fn sound_row(&mut self, ui: &mut Ui) {
+        {
+            let label = if self.audio.muted { "소리 꺼짐" } else { "소리 켜짐" };
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+            let p = ui.painter();
+            if resp.hovered() {
+                p.rect_filled(rect, CornerRadius::same(10), hover());
+            }
+            let c = if self.audio.muted { muted() } else { BLUE };
+            paint_speaker(p, Pos2::new(rect.left() + 26.0, rect.center().y), 20.0, c);
+            if self.audio.muted {
+                p.line_segment([Pos2::new(rect.left() + 16.0, rect.center().y - 10.0), Pos2::new(rect.left() + 36.0, rect.center().y + 10.0)], Stroke::new(2.5, RED));
+            }
+            p.text(Pos2::new(rect.left() + 50.0, rect.center().y), Align2::LEFT_CENTER, label, font(14.0), muted());
+            if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                self.audio.muted = !self.audio.muted;
+                self.p.muted = self.audio.muted;
+            }
+        }
+    }
+
+    fn stat_row(&mut self, ui: &mut Ui) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+        let p = ui.painter();
+        let y = rect.center().y;
+        let x0 = rect.left() + 6.0;
+        paint_flag(p, Rect::from_center_size(Pos2::new(x0 + 18.0, y), vec2(34.0, 24.0)));
+        let streak = self.p.streak_now();
+        let step = (rect.width() - 50.0) / 3.0;
+        let sx = x0 + 50.0;
+        let streak_active = self.p.last_day == today();
+        paint_flame(p, Pos2::new(sx + 12.0, y), 26.0, if streak_active { ORANGE } else { locked() });
+        p.text(Pos2::new(sx + 30.0, y), Align2::LEFT_CENTER, streak.to_string(), bold(18.0), if streak_active { ORANGE } else { muted() });
+        paint_bolt(p, Pos2::new(sx + step + 12.0, y), 26.0, GOLD);
+        p.text(Pos2::new(sx + step + 30.0, y), Align2::LEFT_CENTER, self.p.xp_total.to_string(), bold(18.0), Color32::from_rgb(230, 170, 0));
+        let n = self.p.notebook.len();
+        let nc = if n > 0 { RED } else { muted() };
+        paint_note(p, Pos2::new(sx + step * 2.0 + 12.0, y), 26.0, nc);
+        p.text(Pos2::new(sx + step * 2.0 + 30.0, y), Align2::LEFT_CENTER, n.to_string(), bold(18.0), nc);
+        let tip = ui.interact(Rect::from_min_size(Pos2::new(sx + step * 2.0, rect.top()), vec2(step, 40.0)), ui.scope_id().with("note_tip"), Sense::click());
+        if tip.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("오답 노트: 틀린 문제 수 (눌러서 열기)").clicked() {
+            self.tab = Tab::Notebook;
+        }
+    }
+
+    fn side(&mut self, ui: &mut Ui, now: f64) {
+        self.stat_row(ui);
+        ui.add_space(14.0);
+        let w = ui.available_width();
+        // daily goal
+        card_frame().show(ui, |ui| {
+            ui.set_width(w - 40.0);
+            ui.label(RichText::new("오늘의 목표").font(bold(18.0)));
+            ui.add_space(4.0);
+            let xp = self.p.xp_today();
+            let goal = self.p.daily_goal;
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::hover());
+                paint_bolt(ui.painter(), r.center(), 40.0, GOLD);
+                ui.vertical(|ui| {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("XP {} 얻기", goal)).font(bold(15.0)));
+                    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
+                    progress_bar(ui.painter(), r, xp as f32 / goal as f32, GOLD);
+                    ui.label(RichText::new(format!("{} / {} XP", xp.min(goal), goal)).font(font(13.0)).color(muted()));
+                });
+            });
+        });
+        ui.add_space(12.0);
+        // hearts
+        // review of weak words
+        let due = self.p.due_count();
+        let learned = self.p.words_learned();
+        if learned > 0 {
+            card_frame().show(ui, |ui| {
+                ui.set_width(w - 40.0);
+                ui.label(RichText::new("복습하기").font(bold(18.0)));
+                let msg = if due > 0 {
+                    format!("다시 볼 때가 된 단어가 {}개 있어요.", due)
+                } else {
+                    "오늘 복습할 단어를 모두 끝냈어요!".to_string()
+                };
+                ui.label(RichText::new(msg).font(font(14.0)).color(muted()));
+                ui.add_space(4.0);
+                let label = if due > 0 { "약한 단어 복습하기" } else { "그래도 연습하기" };
+                if button3d(ui, label, vec2(ui.available_width(), 44.0), BLUE, true).clicked() {
+                    self.start(LessonKind::Practice, now);
+                }
+            });
+            ui.add_space(12.0);
+        }
+        // mistake notebook
+        {
+            let n = self.p.notebook.len();
+            card_frame().show(ui, |ui| {
+                ui.set_width(w - 40.0);
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+                    paint_note(ui.painter(), r.center(), 26.0, RED);
+                    ui.label(RichText::new("오답 노트").font(bold(18.0)));
+                });
+                let msg = if n > 0 {
+                    format!("틀린 문제 {}개가 기다리고 있어요. 두 번 연달아 맞히면 졸업해요.", n)
+                } else {
+                    "틀린 문제가 없어요. 레슨에서 틀리면 여기에 모여요.".to_string()
+                };
+                ui.label(RichText::new(msg).font(font(14.0)).color(muted()));
+                if n > 0 {
+                    ui.add_space(4.0);
+                    if button3d(ui, "틀린 문제 다시 풀기", vec2(ui.available_width(), 44.0), RED, true).clicked() {
+                        self.start(LessonKind::Mistakes, now);
+                    }
+                }
+            });
+            ui.add_space(12.0);
+        }
+        // phrase of the day
+        let all: Vec<(usize, usize)> = UNITS.iter().enumerate().flat_map(|(u, unit)| (0..unit.sentences.len()).map(move |s| (u, s))).collect();
+        let (u, s) = all[(today().rem_euclid(all.len() as i32)) as usize];
+        let sent = &UNITS[u].sentences[s];
+        let female = self.p.female();
+        card_frame().show(ui, |ui| {
+            ui.set_width(w - 40.0);
+            ui.label(RichText::new("오늘의 표현").font(bold(18.0)));
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                if speaker_button(ui, 44.0, BLUE).clicked() {
+                    self.audio.speak(&lesson::sentence_thai(sent, female), false);
+                }
+                ui.add_space(4.0);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(lesson::sentence_thai(sent, female)).font(bold(22.0)).color(fg()));
+                    ui.label(RichText::new(lesson::sentence_pron(sent, female)).font(font(13.5)).color(muted()));
+                    ui.label(RichText::new(lesson::sentence_tones(sent, female)).font(bold(13.5)).color(TONE));
+                });
+            });
+            ui.label(RichText::new(sent.korean()).font(font(15.0)));
+        });
+        ui.add_space(12.0);
+        // tip
+        card_frame().show(ui, |ui| {
+            ui.set_width(w - 40.0);
+            ui.label(RichText::new("알아 두면 좋아요").font(bold(16.0)));
+            ui.label(
+                RichText::new("한글 발음이 같아도 성조가 다르면 다른 말이에요. ไม่ 마이↘ (아니다), ไหม 마이↗ (질문), ใหม่ 마이↓ (새로운). 주황색 화살표가 성조예요.")
+                    .font(font(14.0))
+                    .color(muted()),
+            );
+        });
+    }
+}
+
+// ---------------------------------------------------------------- learn tab (path)
+
+impl App {
+    fn learn_tab(&mut self, ui: &mut Ui, now: f64) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let full = ui.available_width();
+            let col_w = 560.0f32.min(full - 48.0);
+            let left = ui.max_rect().left() + (full - col_w) / 2.0;
+            ui.add_space(24.0);
+            let current = self.p.current();
+            if full < 760.0 || self.force_narrow {
+                ui.add_space(0.0);
+                let pad = ((full - col_w) / 2.0).max(0.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(pad);
+                    ui.vertical(|ui| {
+                        ui.set_width(col_w);
+                        self.mobile_cards(ui, now, col_w);
+                    });
+                });
+            }
+            let mut start: Option<(usize, usize)> = None;
+            let mut locked_click = false;
+            for (u, unit) in UNITS.iter().enumerate() {
+                let color = rgb(unit.color);
+                // course level heading at the start of each level
+                if let Some((name, desc)) = crate::data::level_start(u) {
+                    let (row, _) = ui.allocate_exact_size(vec2(full, if u == 0 { 56.0 } else { 80.0 }), Sense::hover());
+                    let p = ui.painter();
+                    let y = row.bottom() - 30.0;
+                    let g = p.layout_no_wrap(format!("{name} 과정 · {desc}"), bold(16.0), muted());
+                    let tw = g.size().x + 30.0;
+                    let cx = left + col_w / 2.0;
+                    p.line_segment([Pos2::new(left, y), Pos2::new(cx - tw / 2.0, y)], Stroke::new(2.0, border()));
+                    p.line_segment([Pos2::new(cx + tw / 2.0, y), Pos2::new(left + col_w, y)], Stroke::new(2.0, border()));
+                    p.galley(Pos2::new(cx - g.size().x / 2.0, y - g.size().y / 2.0), g, muted());
+                }
+                // banner
+                let (row, _) = ui.allocate_exact_size(vec2(full, 92.0), Sense::hover());
+                let banner = Rect::from_min_size(Pos2::new(left, row.top()), vec2(col_w, 88.0));
+                let unlocked = self.p.done[u] > 0 || current.map(|c| c.0 == u).unwrap_or(false) || u == 0;
+                let bc = if unlocked { color } else { faint() };
+                let p = ui.painter();
+                p.rect_filled(banner.translate(vec2(0.0, 4.0)), CornerRadius::same(16), darken(bc, 0.8));
+                p.rect_filled(banner, CornerRadius::same(16), bc);
+                p.text(banner.left_top() + vec2(22.0, 18.0), Align2::LEFT_TOP, format!("단원 {} · {}", u + 1, crate::data::level_name(u)), bold(14.0), Color32::from_white_alpha(225));
+                p.text(banner.left_top() + vec2(22.0, 38.0), Align2::LEFT_TOP, unit.title, bold(23.0), WHITE);
+                p.text(banner.right_center() + vec2(-22.0, 0.0), Align2::RIGHT_CENTER, unit.desc, font(14.0), Color32::from_white_alpha(235));
+                let doneu = self.p.done[u] as usize;
+                p.text(
+                    banner.right_top() + vec2(-22.0, 16.0),
+                    Align2::RIGHT_TOP,
+                    format!("{}/{}", doneu, LESSONS_PER_UNIT),
+                    bold(13.0),
+                    Color32::from_white_alpha(225),
+                );
+                ui.add_space(26.0);
+                let sign = if u % 2 == 0 { -1.0 } else { 1.0 };
+                let offsets = [0.0, 62.0, 96.0, 62.0, 0.0];
+                for l in 0..LESSONS_PER_UNIT {
+                    let (row, _) = ui.allocate_exact_size(vec2(full, 100.0), Sense::hover());
+                    let c = Pos2::new(left + col_w / 2.0 + sign * offsets[l], row.center().y);
+                    let state = if l < doneu {
+                        1
+                    } else if current == Some((u, l)) {
+                        2
+                    } else {
+                        0
+                    };
+                    let node = Rect::from_center_size(c, vec2(78.0, 78.0));
+                    let resp = ui.interact(node, ui.scope_id().with(("node", u, l)), Sense::click());
+                    let p = ui.painter();
+                    let r = 36.0;
+                    let (face, edge) = match state {
+                        0 => (locked(), darken(locked(), 0.85)),
+                        _ => (color, darken(color, 0.78)),
+                    };
+                    let pressed = resp.is_pointer_button_down_on() && state != 0;
+                    let lift = if pressed { 6.0 } else { 0.0 };
+                    if state == 2 {
+                        // ring
+                        p.circle_stroke(c + vec2(0.0, 3.0), r + 10.0, Stroke::new(7.0, track()));
+                        let frac = 0.25;
+                        let pts: Vec<Pos2> = (0..=24)
+                            .map(|k| {
+                                let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * frac * k as f32 / 24.0;
+                                c + vec2(0.0, 3.0) + vec2(a.cos(), a.sin()) * (r + 10.0)
+                            })
+                            .collect();
+                        p.add(egui::Shape::line(pts, Stroke::new(7.0, color)));
+                    }
+                    p.circle_filled(c + vec2(0.0, 6.0), r, edge);
+                    let fc = if resp.hovered() && state != 0 { lighten(face, 0.08) } else { face };
+                    p.circle_filled(c + vec2(0.0, lift), r, fc);
+                    let ic = c + vec2(0.0, lift);
+                    let review = l == LESSONS_PER_UNIT - 1;
+                    match state {
+                        1 => {
+                            if review {
+                                paint_trophy(p, ic, 38.0, GOLD);
+                            } else {
+                                paint_check(p, ic, 32.0, WHITE, 7.0);
+                            }
+                        }
+                        2 => {
+                            if review {
+                                paint_trophy(p, ic, 38.0, WHITE);
+                            } else {
+                                paint_star(p, ic, 18.0, WHITE);
+                            }
+                        }
+                        _ => {
+                            if review {
+                                paint_trophy(p, ic, 38.0, faint());
+                            } else {
+                                paint_lock(p, ic, 30.0, faint());
+                            }
+                        }
+                    }
+                    if state == 2 {
+                        let bob = (now * 3.0).sin() as f32 * 3.0;
+                        let label = if l == 0 && u == 0 && self.p.lessons_done == 0 { "시작하기" } else { "시작" };
+                        let g = p.layout_no_wrap(label.into(), bold(15.0), color);
+                        let br = Rect::from_center_size(c + vec2(0.0, -r - 34.0 + bob), g.size() + vec2(26.0, 18.0));
+                        p.rect_filled(br.translate(vec2(0.0, 3.0)), CornerRadius::same(10), border());
+                        p.rect_filled(br, CornerRadius::same(10), surface());
+                        p.rect_stroke(br, CornerRadius::same(10), Stroke::new(2.0, border()), StrokeKind::Inside);
+                        let tip = br.center_bottom();
+                        p.add(egui::Shape::convex_polygon(
+                            vec![tip + vec2(-8.0, -1.0), tip + vec2(8.0, -1.0), tip + vec2(0.0, 8.0)],
+                            surface(),
+                            Stroke::NONE,
+                        ));
+                        p.line_segment([tip + vec2(-8.0, 0.0), tip + vec2(0.0, 8.0)], Stroke::new(2.0, border()));
+                        p.line_segment([tip + vec2(8.0, 0.0), tip + vec2(0.0, 8.0)], Stroke::new(2.0, border()));
+                        p.galley(br.center() - g.size() / 2.0, g, color);
+                    }
+                    // mascot beside the path
+                    if l == 2 && (state != 0 || u == 0) {
+                        let mc = Pos2::new(left + col_w / 2.0 - sign * 150.0, row.center().y + 10.0);
+                        paint_mascot(p, mc, 34.0, state == 1);
+                    }
+                    let hover = if review { "단원 복습 · +20 XP" } else { "레슨 · +10 XP" };
+                    let resp = if state != 0 {
+                        resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(format!("{} {}/{} · {}", unit.title, l + 1, LESSONS_PER_UNIT, hover))
+                    } else {
+                        resp.on_hover_text("앞의 레슨을 먼저 끝내세요")
+                    };
+                    if resp.clicked() {
+                        if state == 0 {
+                            locked_click = true;
+                        } else {
+                            start = Some((u, l));
+                        }
+                    }
+                }
+                ui.add_space(30.0);
+            }
+            let (row, _) = ui.allocate_exact_size(vec2(full, 80.0), Sense::hover());
+            ui.painter().text(row.center(), Align2::CENTER_CENTER, "새 단원이 곧 추가될 예정이에요!", font(15.0), muted());
+            if let Some((u, l)) = start {
+                self.try_start(u, l, now);
+            }
+            if locked_click {
+                self.toast("앞의 레슨을 먼저 끝내야 열려요", now);
+            }
+        });
+    }
+}
+
+// ---------------------------------------------------------------- letters tab
+
+impl App {
+    fn page_header(ui: &mut Ui, title: &str, sub: &str) {
+        ui.add_space(26.0);
+        ui.label(RichText::new(title).font(bold(28.0)));
+        ui.label(RichText::new(sub).font(font(15.0)).color(muted()));
+        ui.add_space(14.0);
+    }
+
+    fn letters_tab(&mut self, ui: &mut Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let full = ui.available_width();
+            let col_w = 700.0f32.min(full - 48.0);
+            let pad = ((full - col_w) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                ui.vertical(|ui| {
+                    ui.set_width(col_w);
+                    Self::page_header(ui, "태국 문자", "글자를 눌러 소리를 들어 보세요. 자음은 성조 규칙에 따라 세 무리로 나뉘어요.");
+                    // segmented control
+                    ui.horizontal(|ui| {
+                        for (v, label) in [(0u8, "자음 (기본 28자)"), (1, "모음"), (2, "성조 5개")] {
+                            let sel = self.letters_page == v;
+                            let r = if sel {
+                                button3d(ui, label, vec2(170.0, 44.0), PRIMARY, true)
+                            } else {
+                                outline_button(ui, label, vec2(170.0, 44.0), muted())
+                            };
+                            if r.clicked() {
+                                self.letters_page = v;
+                            }
+                        }
+                    });
+                    ui.add_space(12.0);
+                    if self.letters_page == 0 {
+                        if button3d(ui, "글자 읽기 연습하기 (10문제)", vec2(col_w.min(420.0), 50.0), ORANGE, true).clicked() {
+                            let now = ui.input(|i| i.time);
+                            self.start(LessonKind::Letters, now);
+                        }
+                        ui.add_space(10.0);
+                        let classes = [(PRIMARY, "중자음"), (ORANGE, "고자음"), (BLUE, "저자음")];
+                        ui.horizontal(|ui| {
+                            for (c, label) in classes {
+                                let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                                ui.painter().circle_filled(r.center(), 6.0, c);
+                                ui.label(RichText::new(label).font(font(14.0)).color(muted()));
+                                ui.add_space(10.0);
+                            }
+                        });
+                        ui.add_space(8.0);
+                        let cell = vec2(128.0, 132.0);
+                        let per_row = ((col_w + 10.0) / (cell.x + 10.0)).floor().max(1.0) as usize;
+                        for row in CONSONANTS.chunks(per_row) {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 10.0;
+                                for cons in row {
+                                    let (rect, resp) = ui.allocate_exact_size(cell, Sense::click());
+                                    let p = ui.painter();
+                                    let col = [PRIMARY, ORANGE, BLUE][cons.class as usize];
+                                    let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
+                                    p.rect_filled(rect, CornerRadius::same(14), border());
+                                    p.rect_filled(face, CornerRadius::same(14), if resp.hovered() { lighten(col, 0.9) } else { surface() });
+                                    p.rect_stroke(face, CornerRadius::same(14), Stroke::new(2.0, if resp.hovered() { lighten(col, 0.4) } else { border() }), StrokeKind::Inside);
+                                    p.text(face.center_top() + vec2(0.0, 12.0), Align2::CENTER_TOP, cons.letter, bold(42.0), col);
+                                    p.text(face.center_top() + vec2(0.0, 72.0), Align2::CENTER_TOP, cons.name_pron, bold(13.5), fg());
+                                    p.text(face.center_top() + vec2(0.0, 93.0), Align2::CENTER_TOP, format!("{} · {}", cons.sound, cons.meaning), font(12.0), muted());
+                                    if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                        self.audio.speak(cons.name, true);
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0);
+                        }
+                    } else if self.letters_page == 1 {
+                        for v in VOWELS {
+                            card_frame().inner_margin(Margin::symmetric(18, 10)).show(ui, |ui| {
+                                ui.set_width(col_w - 40.0);
+                                ui.horizontal(|ui| {
+                                    let (r, _) = ui.allocate_exact_size(vec2(110.0, 50.0), Sense::hover());
+                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.form, bold(30.0), ORANGE);
+                                    let (r, _) = ui.allocate_exact_size(vec2(150.0, 50.0), Sense::hover());
+                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.sound, bold(16.0), fg());
+                                    let (r, _) = ui.allocate_exact_size(vec2(200.0, 50.0), Sense::hover());
+                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, format!("예: {}  ({})", v.example, v.example_pron), font(17.0), muted());
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if small_speaker(ui, BLUE).clicked() {
+                                            self.audio.speak(v.example, true);
+                                        }
+                                    });
+                                });
+                            });
+                            ui.add_space(6.0);
+                        }
+                    } else {
+                        ui.label(RichText::new("태국어에는 성조가 5개 있어요. 한글로 똑같이 '마이'라고 써도, 성조가 다르면 전혀 다른 말이 돼요. 눌러서 들어 보세요.").font(font(15.0)).color(muted()));
+                        ui.add_space(8.0);
+                        for t in TONES {
+                            card_frame().inner_margin(Margin::symmetric(18, 10)).show(ui, |ui| {
+                                ui.set_width(col_w - 40.0);
+                                ui.horizontal(|ui| {
+                                    let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+                                    let p = ui.painter();
+                                    p.rect_filled(r, CornerRadius::same(14), lighten(TONE, 0.85));
+                                    p.text(r.center(), Align2::CENTER_CENTER, t.mark, bold(30.0), TONE);
+                                    ui.add_space(8.0);
+                                    ui.vertical(|ui| {
+                                        ui.set_width(250.0);
+                                        ui.add_space(6.0);
+                                        ui.label(RichText::new(t.name).font(bold(18.0)));
+                                        ui.label(RichText::new(t.how).font(font(14.0)).color(muted()));
+                                    });
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if small_speaker(ui, BLUE).clicked() {
+                                            self.audio.speak(t.example, true);
+                                        }
+                                        ui.vertical(|ui| {
+                                            ui.add_space(6.0);
+                                            ui.label(RichText::new(format!("{}  {}{}", t.example, t.example_pron, t.mark)).font(bold(20.0)));
+                                            ui.label(RichText::new(t.example_ko).font(font(14.0)).color(muted()));
+                                        });
+                                    });
+                                });
+                            });
+                            ui.add_space(6.0);
+                        }
+                        ui.add_space(8.0);
+                        card_frame().show(ui, |ui| {
+                            ui.set_width(col_w - 40.0);
+                            ui.label(RichText::new("성조는 어떻게 정해질까요?").font(bold(17.0)));
+                            ui.label(
+                                RichText::new(
+                                    "글자의 자음 무리(중자음·고자음·저자음), 성조 기호(่ ้ ๊ ๋), 음절이 끝나는 방식이 합쳐져 성조가 정해져요. \
+                                     처음에는 규칙보다 단어마다 붙은 주황색 화살표를 보고 소리를 따라 하며 익히는 게 쉬워요.",
+                                )
+                                .font(font(14.0))
+                                .color(muted()),
+                            );
+                        });
+                    }
+                    ui.add_space(30.0);
+                });
+            });
+        });
+    }
+
+    // ------------------------------------------------------------ mistake notebook tab
+
+    fn notebook_tab(&mut self, ui: &mut Ui, now: f64) {
+        let mut start = false;
+        let mut remove: Option<usize> = None;
+        let mut speak: Option<String> = None;
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let full = ui.available_width();
+            let col_w = 680.0f32.min(full - 48.0);
+            let pad = ((full - col_w) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                ui.vertical(|ui| {
+                    ui.set_width(col_w);
+                    let n = self.p.notebook.len();
+                    Self::page_header(
+                        ui,
+                        "오답 노트",
+                        &format!("틀린 문제 {}개 · 처음 시도에서 두 번 연달아 맞히면 노트에서 졸업해요", n),
+                    );
+                    if n == 0 {
+                        card_frame().show(ui, |ui| {
+                            ui.set_width(col_w - 40.0);
+                            ui.vertical_centered(|ui| {
+                                let (r, _) = ui.allocate_exact_size(vec2(140.0, 120.0), Sense::hover());
+                                paint_mascot(ui.painter(), r.center(), 40.0, true);
+                                ui.label(RichText::new("틀린 문제가 하나도 없어요!").font(bold(19.0)));
+                                ui.label(RichText::new("레슨에서 틀리거나 건너뛴 문제는 여기에 모여요.").font(font(14.0)).color(muted()));
+                            });
+                        });
+                        return;
+                    }
+                    if button3d(ui, &format!("틀린 문제 다시 풀기 ({}개)", n.min(12)), vec2(col_w, 52.0), RED, true).clicked() {
+                        start = true;
+                    }
+                    ui.add_space(12.0);
+                    let female = self.p.female();
+                    let order = self.p.notebook_order();
+                    for (u, item, sentence) in order {
+                        let Some(idx) = self.p.notebook.iter().position(|m| m.unit == u && m.item == item && m.sentence == sentence) else { continue };
+                        let m = self.p.notebook[idx].clone();
+                        let (th, pron, tones, ko) = if sentence {
+                            let s = &UNITS[u].sentences[item];
+                            (lesson::sentence_thai(s, female), lesson::sentence_pron(s, female), lesson::sentence_tones(s, female), s.korean())
+                        } else {
+                            let w = &UNITS[u].words[item];
+                            (w.th.to_string(), w.pron.to_string(), crate::data::tone_marks(w.tone), w.ko.to_string())
+                        };
+                        card_frame().inner_margin(Margin::symmetric(16, 12)).show(ui, |ui| {
+                            ui.set_width(col_w - 34.0);
+                            ui.horizontal(|ui| {
+                                if small_speaker(ui, BLUE).clicked() {
+                                    speak = Some(th.clone());
+                                }
+                                ui.add_space(4.0);
+                                ui.vertical(|ui| {
+                                    ui.set_width(if col_w >= 560.0 { col_w - 250.0 } else { col_w - 90.0 });
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&th).font(bold(22.0)));
+                                        ui.label(RichText::new(if sentence { "문장" } else { "단어" }).font(font(12.0)).color(muted()));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&pron).font(font(14.0)).color(muted()));
+                                        ui.label(RichText::new(&tones).font(bold(14.0)).color(TONE));
+                                    });
+                                    ui.label(RichText::new(&ko).font(font(15.0)));
+                                    ui.label(RichText::new(format!("단원 {} · {}", u + 1, UNITS[u].title)).font(font(12.0)).color(muted()));
+                                });
+                                if col_w >= 560.0 {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if outline_button(ui, "외웠어요", vec2(84.0, 38.0), muted()).on_hover_text("노트에서 빼기").clicked() {
+                                            remove = Some(idx);
+                                        }
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new(format!("{}번 틀림", m.wrong)).font(bold(14.0)).color(RED));
+                                            ui.horizontal(|ui| {
+                                                for k in 0..GRADUATE {
+                                                    let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                                                    ui.painter().circle_filled(r.center(), 6.0, if k < m.streak { GREEN } else { locked() });
+                                                }
+                                            });
+                                        });
+                                    });
+                                }
+                            });
+                            if col_w < 560.0 {
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{}번 틀림", m.wrong)).font(bold(14.0)).color(RED));
+                                    for k in 0..GRADUATE {
+                                        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                                        ui.painter().circle_filled(r.center(), 6.0, if k < m.streak { GREEN } else { locked() });
+                                    }
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if outline_button(ui, "외웠어요", vec2(84.0, 36.0), muted()).clicked() {
+                                            remove = Some(idx);
+                                        }
+                                    });
+                                });
+                            }
+                        });
+                        ui.add_space(8.0);
+                    }
+                    ui.add_space(30.0);
+                });
+            });
+        });
+        if let Some(t) = speak {
+            self.audio.speak(&t, false);
+        }
+        if let Some(i) = remove {
+            self.p.notebook.remove(i);
+            self.toast("오답 노트에서 뺐어요", now);
+        }
+        if start {
+            self.start(LessonKind::Mistakes, now);
+        }
+    }
+
+    // ------------------------------------------------------------ words tab
+
+    fn words_tab(&mut self, ui: &mut Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let full = ui.available_width();
+            let col_w = 680.0f32.min(full - 48.0);
+            let pad = ((full - col_w) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                ui.vertical(|ui| {
+                    ui.set_width(col_w);
+                    let learned = self.p.words_learned();
+                    let total: usize = UNITS.iter().map(|u| u.words.len()).sum();
+                    Self::page_header(ui, "단어장", &format!("배운 단어 {} / {}개 · 레슨을 끝내면 단어가 열려요", learned, total));
+                    for (u, unit) in UNITS.iter().enumerate() {
+                        let color = rgb(unit.color);
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(8.0, 26.0), Sense::hover());
+                            ui.painter().rect_filled(r, CornerRadius::same(4), color);
+                            ui.label(RichText::new(format!("단원 {} · {}", u + 1, unit.title)).font(bold(19.0)));
+                        });
+                        ui.add_space(4.0);
+                        card_frame().inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
+                            ui.set_width(col_w - 20.0);
+                            for (i, wd) in unit.words.iter().enumerate() {
+                                let known = self.p.word_learned(u, i);
+                                let (rect, _) = ui.allocate_exact_size(vec2(col_w - 20.0, 48.0), Sense::hover());
+                                let p = ui.painter();
+                                if i > 0 {
+                                    p.line_segment([rect.left_top() + vec2(10.0, 0.0), rect.right_top() - vec2(10.0, 0.0)], Stroke::new(1.0, border()));
+                                }
+                                let y = rect.center().y;
+                                if known {
+                                    p.text(Pos2::new(rect.left() + 14.0, y), Align2::LEFT_CENTER, wd.th, bold(22.0), fg());
+                                    paint_pron(p, Pos2::new(rect.left() + 180.0, y), false, wd.pron, &crate::data::tone_marks(wd.tone), 15.0);
+                                    p.text(Pos2::new(rect.left() + 330.0, y), Align2::LEFT_CENTER, wd.ko, font(15.5), fg());
+                                    // memory strength: 4 bars
+                                    let level = self.p.stat(u, i).map(|s| s.level).unwrap_or(0);
+                                    let bars = ((level as usize) + 1).min(4);
+                                    for b in 0..4 {
+                                        let bx = rect.right() - 92.0 + b as f32 * 9.0;
+                                        let bh = 6.0 + b as f32 * 4.0;
+                                        let r = Rect::from_min_max(Pos2::new(bx, y + 9.0 - bh), Pos2::new(bx + 6.0, y + 9.0));
+                                        p.rect_filled(r, CornerRadius::same(2), if b < bars { GOLD } else { locked() });
+                                    }
+                                    let sp = Rect::from_center_size(Pos2::new(rect.right() - 28.0, y), vec2(34.0, 34.0));
+                                    let resp = ui.interact(sp, ui.scope_id().with(("w", u, i)), Sense::click());
+                                    let p = ui.painter();
+                                    if resp.hovered() {
+                                        p.rect_filled(sp, CornerRadius::same(10), lighten(BLUE, 0.85));
+                                    }
+                                    paint_speaker(p, sp.center(), 22.0, BLUE);
+                                    if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                        self.audio.speak(wd.th, false);
+                                    }
+                                } else {
+                                    p.text(Pos2::new(rect.left() + 14.0, y), Align2::LEFT_CENTER, wd.th, bold(22.0), faint());
+                                    p.text(Pos2::new(rect.left() + 190.0, y), Align2::LEFT_CENTER, "? ? ?", font(15.0), faint());
+                                    paint_lock(p, Pos2::new(rect.right() - 28.0, y), 20.0, faint());
+                                }
+                            }
+                        });
+                        ui.add_space(18.0);
+                    }
+                });
+            });
+        });
+    }
+
+    // ------------------------------------------------------------ profile tab
+
+    fn profile_tab(&mut self, ui: &mut Ui, now: f64) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let full = ui.available_width();
+            let col_w = 640.0f32.min(full - 48.0);
+            let pad = ((full - col_w) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                ui.vertical(|ui| {
+                    ui.set_width(col_w);
+                    ui.add_space(24.0);
+                    // header
+                    let (rect, _) = ui.allocate_exact_size(vec2(col_w, 150.0), Sense::hover());
+                    let p = ui.painter();
+                    p.rect_filled(rect, CornerRadius::same(18), primary_soft());
+                    paint_mascot(p, Pos2::new(rect.left() + 90.0, rect.center().y - 4.0), 44.0, true);
+                    p.text(Pos2::new(rect.left() + 170.0, rect.center().y - 22.0), Align2::LEFT_CENTER, "나의 태국어", bold(26.0), ink(PRIMARY, 0.75));
+                    let lvl = 1 + self.p.xp_total / 100;
+                    p.text(
+                        Pos2::new(rect.left() + 170.0, rect.center().y + 14.0),
+                        Align2::LEFT_CENTER,
+                        format!("레벨 {} · 최고 연속 기록 {}일", lvl, self.p.best_streak),
+                        font(15.0),
+                        ink(PRIMARY, 0.7),
+                    );
+                    ui.add_space(18.0);
+                    ui.label(RichText::new("통계").font(bold(21.0)));
+                    let stats = [
+                        ("연속 학습", format!("{}일", self.p.streak_now()), ORANGE, 0),
+                        ("총 XP", format!("{}", self.p.xp_total), GOLD, 1),
+                        ("완료한 레슨", format!("{}", self.p.lessons_done), PRIMARY, 2),
+                        ("배운 단어", format!("{}", self.p.words_learned()), BLUE, 3),
+                    ];
+                    let cw = (col_w - 12.0) / 2.0;
+                    for pair in stats.chunks(2) {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 12.0;
+                            for (label, value, c, icon) in pair {
+                                let (r, _) = ui.allocate_exact_size(vec2(cw, 76.0), Sense::hover());
+                                let p = ui.painter();
+                                p.rect_filled(r, CornerRadius::same(14), surface());
+                                p.rect_stroke(r, CornerRadius::same(14), Stroke::new(2.0, border()), StrokeKind::Inside);
+                                let ic = Pos2::new(r.left() + 34.0, r.center().y);
+                                match icon {
+                                    0 => paint_flame(p, ic, 30.0, *c),
+                                    1 => paint_bolt(p, ic, 30.0, *c),
+                                    2 => paint_check(p, ic, 26.0, *c, 6.0),
+                                    _ => {
+                                        p.text(ic, Align2::CENTER_CENTER, "ก", bold(28.0), *c);
+                                    }
+                                }
+                                p.text(Pos2::new(r.left() + 64.0, r.center().y - 11.0), Align2::LEFT_CENTER, value, bold(21.0), fg());
+                                p.text(Pos2::new(r.left() + 64.0, r.center().y + 14.0), Align2::LEFT_CENTER, *label, font(13.5), muted());
+                            }
+                        });
+                        ui.add_space(4.0);
+                    }
+                    ui.add_space(14.0);
+                    // weekly chart
+                    ui.label(RichText::new("이번 주 XP").font(bold(21.0)));
+                    card_frame().show(ui, |ui| {
+                        ui.set_width(col_w - 40.0);
+                        let (r, _) = ui.allocate_exact_size(vec2(col_w - 40.0, 160.0), Sense::hover());
+                        let p = ui.painter();
+                        let t = today();
+                        let vals: Vec<u32> = (0..7).map(|k| *self.p.xp_by_day.get(&(t - 6 + k)).unwrap_or(&0)).collect();
+                        let maxv = vals.iter().copied().max().unwrap_or(0).max(self.p.daily_goal) as f32;
+                        let bw = r.width() / 7.0;
+                        let names = ["월", "화", "수", "목", "금", "토", "일"];
+                        let base_wd = chrono::Local::now().date_naive().weekday().num_days_from_monday() as i32;
+                        let gy = r.bottom() - 24.0 - (self.p.daily_goal as f32 / maxv) * (r.height() - 50.0);
+                        p.line_segment([Pos2::new(r.left(), gy), Pos2::new(r.right(), gy)], Stroke::new(1.5, lighten(GOLD, 0.4)));
+                        p.text(Pos2::new(r.right(), gy - 4.0), Align2::RIGHT_BOTTOM, "목표", font(11.0), Color32::from_rgb(220, 160, 0));
+                        for (k, v) in vals.iter().enumerate() {
+                            let x = r.left() + bw * (k as f32 + 0.5);
+                            let h = (*v as f32 / maxv) * (r.height() - 50.0);
+                            let bar = Rect::from_min_max(Pos2::new(x - bw * 0.25, r.bottom() - 24.0 - h.max(4.0)), Pos2::new(x + bw * 0.25, r.bottom() - 24.0));
+                            p.rect_filled(bar, CornerRadius::same(6), if k == 6 { PRIMARY } else { lighten(PRIMARY, 0.45) });
+                            if *v > 0 {
+                                p.text(bar.center_top() - vec2(0.0, 4.0), Align2::CENTER_BOTTOM, v.to_string(), bold(12.0), fg());
+                            }
+                            let wd = (base_wd - 6 + k as i32).rem_euclid(7) as usize;
+                            p.text(Pos2::new(x, r.bottom() - 8.0), Align2::CENTER_CENTER, names[wd], if k == 6 { bold(13.0) } else { font(13.0) }, if k == 6 { fg() } else { muted() });
+                        }
+                    });
+                    ui.add_space(14.0);
+                    // daily goal
+                    ui.label(RichText::new("하루 목표").font(bold(21.0)));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let bw = (col_w - 30.0) / 4.0;
+                        for (g, label) in [(10, "가볍게"), (20, "보통"), (30, "열심히"), (50, "집중")] {
+                            let txt = if col_w < 560.0 { format!("{}XP", g) } else { format!("{} · {}XP", label, g) };
+                            let r = if self.p.daily_goal == g {
+                                button3d(ui, &txt, vec2(bw, 48.0), ORANGE, true)
+                            } else {
+                                outline_button(ui, &txt, vec2(bw, 48.0), fg())
+                            };
+                            if r.clicked() {
+                                self.p.daily_goal = g;
+                            }
+                        }
+                    });
+                    ui.add_space(14.0);
+                    // achievements
+                    ui.label(RichText::new("업적").font(bold(21.0)));
+                    let unit1 = self.p.done[0] as u32;
+                    let ach = [
+                        ("첫걸음", "레슨 1개 끝내기", self.p.lessons_done.min(1), 1, PRIMARY),
+                        ("불꽃 시작", "3일 연속 학습하기", self.p.best_streak.min(3), 3, ORANGE),
+                        ("단어 수집가", "단어 30개 배우기", (self.p.words_learned() as u32).min(30), 30, BLUE),
+                        ("XP 사냥꾼", "XP 200 모으기", self.p.xp_total.min(200), 200, GOLD),
+                        ("완벽주의자", "실수 없이 레슨 3개 끝내기", self.p.perfect_lessons.min(3), 3, Color32::from_rgb(140, 100, 230)),
+                        ("첫 단원 정복", "단원 1의 모든 레슨 끝내기", unit1.min(5), 5, GREEN),
+                    ];
+                    card_frame().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
+                        ui.set_width(col_w - 30.0);
+                        for (i, (name, desc, have, need, c)) in ach.iter().enumerate() {
+                            let compact_ach = col_w < 560.0;
+                            let (r, _) = ui.allocate_exact_size(vec2(col_w - 30.0, if compact_ach { 92.0 } else { 68.0 }), Sense::hover());
+                            let p = ui.painter();
+                            if i > 0 {
+                                p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, border()));
+                            }
+                            let done = have >= need;
+                            let badge = Rect::from_center_size(Pos2::new(r.left() + 30.0, r.center().y), vec2(48.0, 50.0));
+                            p.rect_filled(badge.translate(vec2(0.0, 3.0)), CornerRadius::same(12), if done { darken(*c, 0.8) } else { darken(locked(), 0.88) });
+                            p.rect_filled(badge, CornerRadius::same(12), if done { *c } else { locked() });
+                            paint_star(p, badge.center(), 14.0, if done { WHITE } else { faint() });
+                            p.text(Pos2::new(r.left() + 68.0, r.center().y - 14.0), Align2::LEFT_CENTER, *name, bold(16.0), fg());
+                            p.text(Pos2::new(r.left() + 68.0, r.center().y + 6.0), Align2::LEFT_CENTER, *desc, font(13.0), muted());
+                            let bar = if compact_ach {
+                                Rect::from_min_size(Pos2::new(r.left() + 68.0, r.center().y + 20.0), vec2(r.width() - 68.0 - 64.0, 12.0))
+                            } else {
+                                Rect::from_min_size(Pos2::new(r.right() - 190.0, r.center().y - 7.0), vec2(130.0, 14.0))
+                            };
+                            progress_bar(p, bar, *have as f32 / *need as f32, *c);
+                            p.text(Pos2::new(r.right() - 8.0, if compact_ach { r.center().y + 26.0 } else { r.center().y }), Align2::RIGHT_CENTER, format!("{}/{}", have, need), bold(13.0), muted());
+                        }
+                    });
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("설정").font(bold(21.0)));
+                    ui.label(RichText::new("말투 (문장 끝과 '나'를 어떻게 말할지)").font(font(14.0)).color(muted()));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let bw = (col_w - 10.0) / 2.0;
+                        for (g, label) in if col_w < 560.0 { [(1u8, "남성 · ครับ"), (2, "여성 · ค่ะ")] } else { [(1u8, "남성 말투 · ครับ 크랍 / ผม 폼"), (2, "여성 말투 · ค่ะ 카 / ฉัน 찬")] } {
+                            let r = if self.p.gender == g {
+                                button3d(ui, label, vec2(bw, 48.0), PRIMARY, true)
+                            } else {
+                                outline_button(ui, label, vec2(bw, 48.0), fg())
+                            };
+                            if r.clicked() {
+                                self.p.gender = g;
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("단계 건너뛰기 (앞 단계를 모두 끝낸 것으로 해요)").font(font(14.0)).color(muted()));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let bw = (col_w - 10.0) / 2.0;
+                        for (start, label) in [(6usize, "초급부터"), (12, "중급부터")] {
+                            let reached = self.p.done.iter().take(start).all(|d| *d as usize == LESSONS_PER_UNIT);
+                            let r = if reached { outline_button(ui, &format!("{} (완료)", label), vec2(bw, 46.0), muted()) } else { outline_button(ui, label, vec2(bw, 46.0), fg()) };
+                            if r.clicked() && !reached {
+                                self.p.skip_to(start);
+                                self.toast(&format!("{}로 이동했어요", label.trim_end_matches("부터")), now);
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("화면 밝기").font(font(14.0)).color(muted()));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let bw = (col_w - 20.0) / 3.0;
+                        for (t, label) in if col_w < 560.0 { [(0u8, "자동"), (1, "라이트"), (2, "다크")] } else { [(0u8, "컴퓨터 설정 따르기"), (1, "라이트 모드"), (2, "다크 모드")] } {
+                            let r = if self.p.theme == t {
+                                button3d(ui, label, vec2(bw, 48.0), Color32::from_rgb(140, 100, 230), true)
+                            } else {
+                                outline_button(ui, label, vec2(bw, 48.0), fg())
+                            };
+                            if r.clicked() {
+                                self.p.theme = t;
+                            }
+                        }
+                    });
+                    ui.add_space(10.0);
+                    // reset
+                    if !self.confirm_reset {
+                        if outline_button(ui, "학습 기록 초기화", vec2(200.0, 46.0), RED).clicked() {
+                            self.confirm_reset = true;
+                        }
+                    } else {
+                        ui.label(RichText::new("모든 진도와 XP가 지워져요. 정말 초기화할까요?").font(font(15.0)).color(RED));
+                        ui.horizontal(|ui| {
+                            if button3d(ui, "초기화", vec2(140.0, 46.0), RED, true).clicked() {
+                                let muted = self.p.muted;
+                                self.p = Progress::default();
+                                self.p.muted = muted;
+                                self.confirm_reset = false;
+                                self.toast("학습 기록을 초기화했어요", now);
+                            }
+                            if outline_button(ui, "취소", vec2(140.0, 46.0), fg()).clicked() {
+                                self.confirm_reset = false;
+                            }
+                        });
+                    }
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("앱").font(bold(21.0)));
+                        ui.label(RichText::new(format!("버전 {}", APP_VERSION)).font(font(14.0)).color(muted()));
+                    });
+                    if !self.confirm_exit {
+                        if button3d(ui, "앱 종료하기", vec2(col_w.min(320.0), 50.0), RED, true).clicked() {
+                            self.confirm_exit = true;
+                        }
+                    } else {
+                        ui.label(RichText::new("앱을 종료할까요? 진도는 자동으로 저장돼요.").font(font(15.0)).color(muted()));
+                        ui.horizontal(|ui| {
+                            if button3d(ui, "종료", vec2(140.0, 46.0), RED, true).clicked() {
+                                self.quit_app(ui.ctx());
+                            }
+                            if outline_button(ui, "취소", vec2(140.0, 46.0), fg()).clicked() {
+                                self.confirm_exit = false;
+                            }
+                        });
+                    }
+                    ui.add_space(40.0);
+                });
+            });
+        });
+    }
+
+    /// Close the app (progress is saved on the way out).
+    fn quit_app(&mut self, ctx: &egui::Context) {
+        self.p.muted = self.audio.muted;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        // Phones: closing the window does not end the app by itself, so end it
+        // a moment later, after the progress has been written.
+        #[cfg(target_os = "android")]
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            std::process::exit(0);
+        });
+    }
+}
+
+// ---------------------------------------------------------------- welcome (first run)
+
+impl App {
+    fn choice_box(ui: &mut Ui, size: Vec2, selected: bool, title: &str, line1: &str, line2: &str, accent: Color32) -> bool {
+        let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+        let p = ui.painter();
+        let (fill, border) = if selected { (lighten(accent, 0.86), accent) } else if resp.hovered() { (hover(), border()) } else { (surface(), border()) };
+        p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, 4.0), rect.max), CornerRadius::same(16), if selected { darken(accent, 0.85) } else { crate::kit::border() });
+        let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 4.0));
+        p.rect_filled(face, CornerRadius::same(16), fill);
+        p.rect_stroke(face, CornerRadius::same(16), Stroke::new(2.0, border), StrokeKind::Inside);
+        p.text(face.left_top() + vec2(20.0, 18.0), Align2::LEFT_TOP, title, bold(19.0), if selected { ink(accent, 0.8) } else { fg() });
+        p.text(face.left_top() + vec2(20.0, 52.0), Align2::LEFT_TOP, line1, bold(17.0), fg());
+        p.text(face.left_top() + vec2(20.0, 82.0), Align2::LEFT_TOP, line2, font(14.0), muted());
+        if selected {
+            let c = face.right_top() + vec2(-26.0, 26.0);
+            p.circle_filled(c, 13.0, accent);
+            paint_check(p, c, 16.0, WHITE, 3.5);
+        }
+        resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
+    }
+
+    fn welcome_screen(&mut self, ui: &mut Ui) {
+        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(surface())).show(ui, |ui| {
+            let r = ui.max_rect();
+            let w = 640.0f32.min(r.width() - 60.0);
+            let area = Rect::from_min_max(Pos2::new(r.center().x - w / 2.0, r.top() + 20.0), Pos2::new(r.center().x + w / 2.0, r.bottom()));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (mr, _) = ui.allocate_exact_size(vec2(120.0, 110.0), Sense::hover());
+                        paint_mascot(ui.painter(), mr.center(), 38.0, true);
+                        ui.vertical(|ui| {
+                            ui.add_space(22.0);
+                            ui.label(RichText::new("사왓디에 오신 걸 환영해요!").font(bold(28.0)).color(PRIMARY));
+                            ui.label(RichText::new("시작하기 전에 말투와 단계를 골라 주세요.").font(font(15.0)).color(muted()));
+                        });
+                    });
+                    ui.add_space(18.0);
+                    ui.label(RichText::new("1. 어떤 말투로 배울까요?").font(bold(20.0)));
+                    ui.label(RichText::new("태국어는 말하는 사람의 성별에 따라 문장 끝과 '나'가 달라져요.").font(font(14.0)).color(muted()));
+                    ui.add_space(4.0);
+                    let bw = (w - 12.0) / 2.0;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        if Self::choice_box(ui, vec2(bw, 116.0), self.welcome_gender == 1, "남성 말투", "ครับ 크랍 · ผม 폼", "สวัสดีครับ (싸왓디 크랍)", BLUE) {
+                            self.welcome_gender = 1;
+                        }
+                        if Self::choice_box(ui, vec2(bw, 116.0), self.welcome_gender == 2, "여성 말투", "ค่ะ 카 · ฉัน 찬", "สวัสดีค่ะ (싸왓디 카)", Color32::from_rgb(235, 90, 150)) {
+                            self.welcome_gender = 2;
+                        }
+                    });
+                    ui.add_space(18.0);
+                    ui.label(RichText::new("2. 어느 단계부터 시작할까요?").font(bold(20.0)));
+                    ui.label(RichText::new("이미 아는 단계는 건너뛸 수 있어요. 나중에 프로필에서 바꿀 수도 있어요.").font(font(14.0)).color(muted()));
+                    ui.add_space(4.0);
+                    let lv = [
+                        (0usize, "기초부터", "인사와 꼭 필요한 말", PRIMARY),
+                        (6, "초급부터", "생활 속 표현 (기초는 건너뛰기)", ORANGE),
+                        (12, "중급부터", "시제·이유·비교 (앞 단계는 건너뛰기)", Color32::from_rgb(140, 100, 230)),
+                    ];
+                    for (start, title, desc, c) in lv {
+                        if Self::choice_box(ui, vec2(w, 108.0), self.welcome_level == start, title, desc, "", c) {
+                            self.welcome_level = start;
+                        }
+                        ui.add_space(6.0);
+                    }
+                    ui.add_space(12.0);
+                    card_frame().show(ui, |ui| {
+                        ui.set_width(w - 40.0);
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                            paint_note(ui.painter(), r.center(), 30.0, RED);
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("틀려도 괜찮아요").font(bold(17.0)));
+                                ui.label(
+                                    RichText::new("틀린 문제는 '오답 노트'에 모였다가 다시 나와요. 두 번 연달아 맞히면 졸업해요.")
+                                        .font(font(14.0))
+                                        .color(muted()),
+                                );
+                            });
+                        });
+                    });
+                    ui.add_space(26.0);
+                    let ready = self.welcome_gender != 0;
+                    if button3d(ui, if ready { "시작하기" } else { "말투를 골라 주세요" }, vec2(w, 54.0), PRIMARY, ready).clicked() {
+                        self.p.gender = self.welcome_gender;
+                        self.p.skip_to(self.welcome_level);
+                    }
+                    ui.add_space(20.0);
+                });
+            });
+        });
+    }
+}
+
+// ---------------------------------------------------------------- lesson screen
+
+impl App {
+    fn lesson_screen(&mut self, ui: &mut Ui, now: f64) {
+        let Some(mut run) = self.run.take() else { return };
+        let mut quit = false;
+        let mut finished = false;
+
+        // ---- header
+        egui::Panel::top("lesson_top")
+            .exact_size(84.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(surface()))
+            .show(ui, |ui| {
+                let full = ui.max_rect();
+                let w = 900.0f32.min(full.width() - 60.0);
+                let row = Rect::from_center_size(full.center(), vec2(w, 40.0));
+                // close
+                let close = Rect::from_center_size(Pos2::new(row.left() + 16.0, row.center().y), vec2(36.0, 36.0));
+                let resp = ui.interact(close, ui.scope_id().with("close"), Sense::click());
+                let p = ui.painter();
+                paint_cross(p, close.center(), 30.0, if resp.hovered() { fg() } else { muted() }, 4.0);
+                if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                    run.confirm_quit = true;
+                }
+                // progress bar
+                let total = run.queue.len().max(1);
+                let done = run.pos + if run.feedback == Some(true) { 1 } else { 0 };
+                let bar = Rect::from_min_max(Pos2::new(row.left() + 52.0, row.center().y - 9.0), Pos2::new(row.right() - 90.0, row.center().y + 9.0));
+                let p = ui.painter();
+                progress_bar(p, bar, done as f32 / total as f32, PRIMARY);
+                if run.combo >= 3 {
+                    p.text(bar.center_top() - vec2(0.0, 6.0), Align2::CENTER_BOTTOM, format!("{}연속 정답!", run.combo), bold(13.0), ORANGE);
+                }
+                // what kind of lesson, and how many missed so far
+                let hc = Pos2::new(row.right() - 62.0, row.center().y);
+                let (label, c) = match run.kind {
+                    LessonKind::Practice => ("복습".to_string(), BLUE),
+                    LessonKind::Mistakes => ("오답".to_string(), RED),
+                    LessonKind::Letters => ("글자".to_string(), ORANGE),
+                    _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
+                };
+                paint_note(p, hc, 26.0, c);
+                p.text(hc + vec2(20.0, 0.0), Align2::LEFT_CENTER, label, bold(17.0), c);
+            });
+
+        if run.confirm_quit {
+            egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(surface())).show(ui, |ui| {
+                let r = ui.max_rect();
+                ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_center_size(r.center(), vec2(420.0, 360.0))), |ui| {
+                    ui.vertical_centered(|ui| {
+                        let (mr, _) = ui.allocate_exact_size(vec2(160.0, 130.0), Sense::hover());
+                        paint_mascot(ui.painter(), mr.center(), 48.0, false);
+                        ui.label(RichText::new("정말 그만할까요?").font(bold(24.0)));
+                        ui.label(RichText::new("지금 그만두면 이번 레슨의 진행 상황이 사라져요.").font(font(15.0)).color(muted()));
+                        ui.add_space(14.0);
+                        if button3d(ui, "계속 학습하기", vec2(300.0, 50.0), PRIMARY, true).clicked() {
+                            run.confirm_quit = false;
+                        }
+                        ui.add_space(6.0);
+                        if outline_button(ui, "그만하기", vec2(300.0, 48.0), RED).clicked() {
+                            quit = true;
+                        }
+                    });
+                });
+            });
+            if !quit {
+                self.run = Some(run);
+            }
+            return;
+        }
+
+        // ---- footer
+        let can_check = match &run.ex().body {
+            Body::Choice { .. } => run.st.selected.is_some(),
+            Body::Tiles { .. } => !run.st.placed.is_empty(),
+            Body::Match { .. } => false,
+            Body::Flash { shadow, .. } => *shadow || run.st.flipped,
+        };
+        let is_match = matches!(run.ex().body, Body::Match { .. });
+        let flash: Option<bool> = match &run.ex().body {
+            Body::Flash { shadow, .. } => Some(*shadow),
+            _ => None,
+        };
+        let flipped = run.st.flipped;
+        let mut do_flip = false;
+        let mut do_replay = false;
+        let mut do_check = false;
+        let mut do_continue = false;
+        let mut do_skip = false;
+        let (enter, backspace, digit) = ui.input(|i| {
+            let mut d = None;
+            let keys = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9];
+            for (k, key) in keys.iter().enumerate() {
+                if i.key_pressed(*key) {
+                    d = Some(k);
+                }
+            }
+            (i.key_pressed(Key::Enter), i.key_pressed(Key::Backspace), d)
+        });
+        if enter {
+            if run.feedback.is_some() {
+                do_continue = true;
+            } else if can_check {
+                do_check = true;
+            } else if flash.is_some() {
+                do_flip = true;
+            }
+        }
+
+        let fb = run.feedback;
+        let footer_fill = match fb {
+            Some(true) => green_soft(),
+            Some(false) => red_soft(),
+            None => surface(),
+        };
+        let narrow_fb = fb.is_some() && ui.available_width() < 700.0;
+        egui::Panel::bottom("lesson_bottom")
+            .exact_size(if narrow_fb { 200.0 } else { 130.0 })
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(footer_fill))
+            .show(ui, |ui| {
+                let full = ui.max_rect();
+                if fb.is_none() {
+                    ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(2.0, border()));
+                }
+                let w = 900.0f32.min(full.width() - 60.0);
+                let row = Rect::from_center_size(full.center(), vec2(w, if narrow_fb { 160.0 } else { 60.0 }));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(row), |ui| {
+                    ui.horizontal_centered(|ui| match fb {
+                        None if flash == Some(true) => {
+                            if outline_button(ui, "다시 듣기", vec2(150.0, 52.0), BLUE).clicked() {
+                                do_replay = true;
+                            }
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if button3d(ui, "따라 했어요", vec2(190.0, 52.0), PRIMARY, true).clicked() {
+                                    do_check = true;
+                                }
+                            });
+                        }
+                        None if flash == Some(false) => {
+                            if !flipped {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if button3d(ui, "뜻 보기", vec2(w.min(320.0), 52.0), BLUE, true).clicked() {
+                                        do_flip = true;
+                                    }
+                                });
+                            } else {
+                                if outline_button(ui, "아직 어려워요", vec2(170.0, 52.0), RED).clicked() {
+                                    do_skip = true;
+                                }
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if button3d(ui, "알아요", vec2(170.0, 52.0), PRIMARY, true).clicked() {
+                                        do_check = true;
+                                    }
+                                });
+                            }
+                        }
+                        None => {
+                            if !is_match {
+                                if outline_button(ui, "건너뛰기", vec2(150.0, 52.0), muted()).clicked() {
+                                    do_skip = true;
+                                }
+                            }
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if !is_match && button3d(ui, "확인", vec2(170.0, 52.0), PRIMARY, can_check).clicked() {
+                                    do_check = true;
+                                }
+                            });
+                        }
+                        Some(ok) => {
+                            let c = if ok { GREEN } else { RED };
+                            let title = if ok && is_match && run.st.match_wrong > 0 {
+                                format!("완료! 실수 {}번", run.st.match_wrong)
+                            } else if ok {
+                                ["훌륭해요!", "정답이에요!", "잘했어요!", "완벽해요!"][run.pos % 4].to_string()
+                            } else if flash == Some(false) {
+                                "복습 노트에 넣을게요".to_string()
+                            } else {
+                                "정답:".to_string()
+                            };
+                            let detail: Option<String> = if ok && is_match && run.st.match_wrong > 0 {
+                                Some("틀린 짝은 복습 목록에 넣어 둘게요.".to_string())
+                            } else if let Some(note) = &run.note {
+                                Some(note.clone())
+                            } else if !ok && !run.ex().solution.is_empty() {
+                                Some(run.ex().solution.clone())
+                            } else {
+                                None
+                            };
+                            let paint_icon = |ui: &mut Ui, size: f32| {
+                                let (ir, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+                                let p = ui.painter();
+                                p.circle_filled(ir.center(), size * 0.47, surface());
+                                if ok {
+                                    paint_check(p, ir.center(), size * 0.47, c, 6.0);
+                                } else {
+                                    paint_cross(p, ir.center(), size * 0.47, c, 6.0);
+                                }
+                            };
+                            if narrow_fb {
+                                // Phone: the text gets the full width, the button sits below it.
+                                ui.vertical(|ui| {
+                                    ui.horizontal_top(|ui| {
+                                        paint_icon(ui, 48.0);
+                                        ui.vertical(|ui| {
+                                            ui.set_width(w - 64.0);
+                                            ui.label(RichText::new(&title).font(bold(20.0)).color(ink(c, 0.8)));
+                                            if let Some(d) = &detail {
+                                                ui.add(egui::Label::new(RichText::new(d).font(font(15.0)).color(ink(c, 0.75))).wrap());
+                                            }
+                                        });
+                                    });
+                                    ui.add_space(10.0);
+                                    if button3d(ui, "계속", vec2(w, 52.0), c, true).clicked() {
+                                        do_continue = true;
+                                    }
+                                });
+                            } else {
+                                paint_icon(ui, 64.0);
+                                ui.add_space(8.0);
+                                ui.vertical(|ui| {
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(&title).font(bold(22.0)).color(ink(c, 0.8)));
+                                    if let Some(d) = &detail {
+                                        ui.label(RichText::new(d).font(font(16.0)).color(ink(c, 0.75)));
+                                    }
+                                });
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if button3d(ui, "계속", vec2(170.0, 52.0), c, true).clicked() {
+                                        do_continue = true;
+                                    }
+                                });
+                            }
+                        }
+                    });
+                });
+            });
+
+        // ---- content
+        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(surface())).show(ui, |ui| {
+            let full = ui.max_rect();
+            let w = 640.0f32.min(full.width() - 60.0);
+            let area = Rect::from_min_max(Pos2::new(full.center().x - w / 2.0, full.top() + 24.0), Pos2::new(full.center().x + w / 2.0, full.bottom()));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    self.exercise_ui(ui, &mut run, now, digit, backspace);
+                });
+            });
+        });
+
+        // ---- actions
+        if do_flip {
+            run.st.flipped = true;
+        }
+        if do_replay {
+            if let Some(t) = run.ex().speak.clone() {
+                self.audio.speak(&t, true);
+            }
+        }
+        if do_skip {
+            do_check = true;
+            run.st.selected = None;
+            run.st.placed.clear();
+            self.check(&mut run, true);
+        } else if do_check {
+            self.check(&mut run, false);
+        }
+        // matching finishes on its own
+        if is_match && run.feedback.is_none() && !run.st.matched_left.is_empty() && run.st.matched_left.iter().all(|m| *m) {
+            run.feedback = Some(true);
+            let words = run.ex().words.clone();
+            for (k, w) in words.iter().enumerate() {
+                if !run.st.match_bad.contains(&k) {
+                    self.p.record(*w, true);
+                }
+            }
+            if run.st.match_wrong == 0 {
+                run.combo += 1;
+                if !run.queue[run.pos].1 {
+                    run.first_right += 1;
+                }
+            } else {
+                run.combo = 0;
+                run.mistakes += run.st.match_wrong;
+            }
+            self.audio.effect(true);
+        }
+        if do_continue && run.feedback.is_some() {
+            run.pos += 1;
+            run.st = ExState::default();
+            run.feedback = None;
+            run.note = None;
+            if run.pos >= run.queue.len() {
+                finished = true;
+            }
+        }
+        let _ = do_check;
+        if quit {
+            self.run = None;
+        } else if finished {
+            self.finish(run, now);
+        } else {
+            self.run = Some(run);
+        }
+    }
+
+    fn check(&mut self, run: &mut Run, skipped: bool) {
+        let ok = if skipped {
+            false
+        } else {
+            match &run.ex().body {
+                Body::Choice { correct, .. } => run.st.selected == Some(*correct),
+                Body::Tiles { tiles, accepted, joiner } => {
+                    let got: Vec<&str> = run.st.placed.iter().map(|&i| tiles[i].main.as_str()).collect();
+                    let got = got.join(joiner);
+                    match accepted.iter().position(|a| a.join(joiner) == got) {
+                        Some(0) => true,
+                        Some(_) => {
+                            run.note = Some(format!("이렇게도 말해요: {}", accepted[0].join(joiner)));
+                            true
+                        }
+                        None => false,
+                    }
+                }
+                Body::Match { .. } => true,
+                Body::Flash { .. } => true,
+            }
+        };
+        run.feedback = Some(ok);
+        // Remember how each practised word went (a skip counts as "not known yet").
+        let words = run.ex().words.clone();
+        for w in words {
+            self.p.record(w, ok);
+        }
+        if ok {
+            run.combo += 1;
+            // A right answer on the first try counts toward leaving the notebook.
+            // (The retry at the end of a lesson right after a mistake does not.)
+            if !run.queue[run.pos].1 {
+                run.first_right += 1;
+                let ex = run.ex().clone();
+                let mut graduated = 0;
+                if let Some((u, si)) = ex.sentence {
+                    graduated += self.p.note_right(u, si, true) as usize;
+                } else {
+                    for (u, i) in &ex.words {
+                        graduated += self.p.note_right(*u, *i, false) as usize;
+                    }
+                }
+                run.graduated += graduated;
+            }
+            if let Some(t) = run.ex().solution_speak.clone() {
+                self.audio.speak(&t, false);
+            }
+        } else {
+            run.combo = 0;
+            run.mistakes += 1;
+            // Into the mistake notebook (a skip counts too: it comes back later).
+            let ex = run.ex().clone();
+            if let Some((u, si)) = ex.sentence {
+                self.p.note_wrong(u, si, true);
+            } else {
+                for (u, i) in &ex.words {
+                    self.p.note_wrong(*u, *i, false);
+                }
+            }
+            if !ex.solution.is_empty() && !run.missed.contains(&ex.solution) {
+                run.missed.push(ex.solution.clone());
+            }
+            if !run.queue[run.pos].1 {
+                let again = run.queue[run.pos].0.clone();
+                run.queue.push((again, true));
+            }
+        }
+        self.audio.effect(ok);
+    }
+
+    fn exercise_ui(&mut self, ui: &mut Ui, run: &mut Run, now: f64, digit: Option<usize>, backspace: bool) {
+        let w = ui.available_width();
+        let ex = run.ex().clone();
+        let locked = run.feedback.is_some();
+        let retry = run.queue[run.pos].1;
+
+        // auto speak once
+        if !run.st.spoke {
+            run.st.spoke = true;
+            if let Some(t) = &ex.speak {
+                self.audio.speak(t, false);
+            }
+        }
+
+        // badge
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let (label, c) = if retry { ("다시 도전", ORANGE) } else { (ex.badge, Color32::from_rgb(140, 100, 230)) };
+            let g = ui.painter().layout_no_wrap(label.into(), bold(14.0), c);
+            let (r, _) = ui.allocate_exact_size(g.size() + vec2(20.0, 10.0), Sense::hover());
+            ui.painter().rect_filled(r, CornerRadius::same(8), lighten(c, 0.85));
+            ui.painter().galley(r.center() - g.size() / 2.0, g, c);
+        });
+        ui.add_space(6.0);
+        ui.label(RichText::new(&ex.title).font(bold(26.0)));
+        ui.add_space(16.0);
+
+        // prompt
+        if ex.listen_only {
+            ui.horizontal(|ui| {
+                if speaker_button(ui, 92.0, BLUE).clicked() {
+                    if let Some(t) = &ex.speak {
+                        self.audio.speak(t, false);
+                    }
+                }
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.add_space(20.0);
+                    let r = outline_button(ui, "천천히 듣기", vec2(140.0, 44.0), BLUE);
+                    if r.clicked() {
+                        if let Some(t) = &ex.speak {
+                            self.audio.speak(t, true);
+                        }
+                    }
+                });
+            });
+            if !self.audio.available() {
+                ui.label(RichText::new("이 컴퓨터에는 태국어 음성이 없어요.").font(font(13.0)).color(muted()));
+            }
+            ui.add_space(20.0);
+        } else if let Some(pr) = &ex.prompt_thai {
+            ui.horizontal(|ui| {
+                // mascot with speech bubble
+                let (mr, _) = ui.allocate_exact_size(vec2(110.0, 120.0), Sense::hover());
+                paint_mascot(ui.painter(), mr.center() + vec2(0.0, 6.0), 36.0, false);
+                ui.add_space(6.0);
+                let frame = egui::Frame::NONE
+                    .stroke(Stroke::new(2.0, border()))
+                    .corner_radius(CornerRadius::same(16))
+                    .inner_margin(Margin::symmetric(16, 12));
+                let resp = frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if speaker_button(ui, 44.0, BLUE).clicked() {
+                            if let Some(t) = &ex.speak {
+                                self.audio.speak(t, false);
+                            }
+                        }
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&pr.th).font(bold(30.0)).color(fg()));
+                            ui.label(RichText::new(&pr.pron).font(font(15.0)).color(muted()));
+                            if !pr.tones.is_empty() {
+                                ui.label(RichText::new(format!("성조  {}", pr.tones)).font(bold(15.0)).color(TONE))
+                                    .on_hover_text("→ 평성   ↓ 저성   ↘ 하강   ↑ 고성   ↗ 상승");
+                            }
+                        });
+                    });
+                });
+                // bubble tail
+                let r = resp.response.rect;
+                let tip = Pos2::new(r.left() - 12.0, r.center().y + 6.0);
+                let p = ui.painter();
+                p.add(egui::Shape::convex_polygon(vec![Pos2::new(r.left() + 1.0, r.center().y - 4.0), tip, Pos2::new(r.left() + 1.0, r.center().y + 14.0)], surface(), Stroke::NONE));
+                p.line_segment([Pos2::new(r.left(), r.center().y - 4.0), tip], Stroke::new(2.0, border()));
+                p.line_segment([tip, Pos2::new(r.left(), r.center().y + 14.0)], Stroke::new(2.0, border()));
+            });
+            ui.add_space(18.0);
+        } else if let Some(ko) = &ex.prompt_ko {
+            ui.horizontal(|ui| {
+                let (mr, _) = ui.allocate_exact_size(vec2(110.0, 110.0), Sense::hover());
+                paint_mascot(ui.painter(), mr.center(), 34.0, false);
+                ui.add_space(6.0);
+                egui::Frame::NONE
+                    .stroke(Stroke::new(2.0, border()))
+                    .corner_radius(CornerRadius::same(16))
+                    .inner_margin(Margin::symmetric(18, 14))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(ko).font(bold(21.0)));
+                    });
+            });
+            ui.add_space(18.0);
+        }
+
+        match &ex.body {
+            Body::Choice { options, correct } => {
+                if !locked {
+                    if let Some(d) = digit {
+                        if d < options.len() {
+                            run.st.selected = Some(d);
+                            if options[d].thai {
+                                self.audio.speak(&options[d].main, false);
+                            }
+                        }
+                    }
+                }
+                let two_cols = options.iter().all(|o| !o.thai || o.sub.is_empty()) && w > 500.0;
+                let card_h = if options.iter().any(|o| o.thai && !o.sub.is_empty()) { 76.0 } else { 62.0 };
+                let cols = if two_cols { 2 } else { 1 };
+                let cw = (w - 12.0 * (cols as f32 - 1.0)) / cols as f32;
+                for chunk in (0..options.len()).collect::<Vec<_>>().chunks(cols) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        for &i in chunk {
+                            let look = if locked {
+                                if i == *correct && run.feedback == Some(false) {
+                                    Look::Right
+                                } else if Some(i) == run.st.selected {
+                                    if i == *correct { Look::Right } else { Look::Wrong }
+                                } else {
+                                    Look::Normal
+                                }
+                            } else if Some(i) == run.st.selected {
+                                Look::Selected
+                            } else {
+                                Look::Normal
+                            };
+                            let r = choice_card(ui, i + 1, &options[i], vec2(cw, card_h), look, !locked);
+                            if r.clicked() && !locked {
+                                run.st.selected = Some(i);
+                                if options[i].thai {
+                                    self.audio.speak(&options[i].main, false);
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+            }
+            Body::Tiles { tiles, .. } => {
+                if !locked {
+                    if backspace {
+                        run.st.placed.pop();
+                    }
+                    if let Some(d) = digit {
+                        if d < tiles.len() && !run.st.placed.contains(&d) {
+                            run.st.placed.push(d);
+                            if tiles[d].thai {
+                                self.audio.speak(&tiles[d].main, false);
+                            }
+                        }
+                    }
+                }
+                // answer area with lines
+                let line_h = if tiles.iter().any(|t| t.thai) { 76.0 } else { 60.0 };
+                let (area, _) = ui.allocate_exact_size(vec2(w, line_h * 2.0 + 10.0), Sense::hover());
+                let p = ui.painter();
+                for k in 1..=2 {
+                    let y = area.top() + line_h * k as f32 + 2.0;
+                    p.line_segment([Pos2::new(area.left(), y), Pos2::new(area.right(), y)], Stroke::new(2.0, border()));
+                }
+                let mut remove: Option<usize> = None;
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area.shrink2(vec2(0.0, 6.0))));
+                {
+                    let ui = &mut child;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, line_h - tiles.iter().map(|t| tile_size(ui, t).y).fold(0.0, f32::max) + 0.0);
+                        for (k, &ti) in run.st.placed.iter().enumerate() {
+                            let look = match run.feedback {
+                                Some(true) => Look::Right,
+                                Some(false) => Look::Wrong,
+                                None => Look::Normal,
+                            };
+                            if tile(ui, &tiles[ti], look).clicked() && !locked {
+                                remove = Some(k);
+                            }
+                        }
+                    });
+                }
+                if let Some(k) = remove {
+                    run.st.placed.remove(k);
+                }
+                ui.add_space(28.0);
+                // tile bank
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(10.0, 12.0);
+                    for (i, t) in tiles.iter().enumerate() {
+                        let used = run.st.placed.contains(&i);
+                        let look = if used { Look::Ghost } else if locked { Look::Faded } else { Look::Normal };
+                        if tile(ui, t, look).clicked() && !used && !locked {
+                            run.st.placed.push(i);
+                            if t.thai {
+                                self.audio.speak(&t.main, false);
+                            }
+                        }
+                    }
+                });
+                ui.add_space(10.0);
+                ui.label(RichText::new("타일을 눌러 문장을 만들고, 다시 누르면 빠져요. (숫자 키, 지우기 키도 쓸 수 있어요)").font(font(12.5)).color(muted()));
+            }
+            Body::Flash { th, pron, tones, ko, shadow } => {
+                let big = if *shadow { 30.0 } else { 46.0 };
+                let height = if *shadow { 300.0 } else { 280.0 };
+                let (rect, resp) = ui.allocate_exact_size(vec2(w, height), if *shadow || locked { Sense::hover() } else { Sense::click() });
+                let back = run.st.flipped && !*shadow;
+                let p = ui.painter();
+                let fill = if back { primary_soft() } else { surface() };
+                p.rect_filled(rect.translate(vec2(0.0, 4.0)), CornerRadius::same(22), border());
+                p.rect_filled(rect, CornerRadius::same(22), fill);
+                p.rect_stroke(rect, CornerRadius::same(22), Stroke::new(2.0, if back { PRIMARY } else { border() }), StrokeKind::Inside);
+                let cx = rect.center().x;
+                if back {
+                    p.text(Pos2::new(cx, rect.top() + 44.0), Align2::CENTER_CENTER, th, bold(30.0), muted());
+                    p.text(Pos2::new(cx, rect.center().y), Align2::CENTER_CENTER, ko, bold(32.0), ink(PRIMARY, 0.7));
+                    p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, "눌러서 다시 뒤집기", font(13.0), muted());
+                } else {
+                    let g = p.layout(th.clone(), bold(big), fg(), rect.width() - 40.0);
+                    let top = rect.top() + 70.0;
+                    p.galley(Pos2::new(cx - g.size().x / 2.0, top), g.clone(), fg());
+                    let mut y = top + g.size().y + 14.0;
+                    paint_pron(p, Pos2::new(cx, y + 8.0), true, pron, tones, 17.0);
+                    y += 34.0;
+                    if *shadow {
+                        let g2 = p.layout(ko.clone(), font(17.0), muted(), rect.width() - 40.0);
+                        p.galley(Pos2::new(cx - g2.size().x / 2.0, y + 6.0), g2, muted());
+                    } else {
+                        p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, if locked { "" } else { "카드를 눌러 뜻 보기" }, font(13.0), muted());
+                    }
+                }
+                if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() && !locked && !*shadow {
+                    run.st.flipped = !run.st.flipped;
+                }
+                // speaker on the card
+                let sp = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 36.0), vec2(48.0, 52.0));
+                if !back {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(sp));
+                    if speaker_button(&mut child, 44.0, BLUE).clicked() {
+                        self.audio.speak(th, false);
+                    }
+                }
+                if *shadow {
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("입 모양을 크게 하고, 들은 대로 소리 내어 읽어 보세요. 마이크 없이 스스로 체크해요.").font(font(13.5)).color(muted()));
+                }
+            }
+            Body::Match { left, right, right_to_left } => {
+                if run.st.matched_left.is_empty() {
+                    run.st.matched_left = vec![false; left.len()];
+                    run.st.matched_right = vec![false; right.len()];
+                }
+                if let Some((_, _, t)) = run.st.wrong_pair {
+                    if now - t > 0.6 {
+                        run.st.wrong_pair = None;
+                    }
+                }
+                let cw = (w - 16.0) / 2.0;
+                let mut click_l = None;
+                let mut click_r = None;
+                for i in 0..left.len() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 16.0;
+                        let wl = run.st.wrong_pair.map(|(l, _, _)| l == i).unwrap_or(false);
+                        let look_l = if run.st.matched_left[i] {
+                            Look::Faded
+                        } else if wl {
+                            Look::Wrong
+                        } else if run.st.m_left == Some(i) {
+                            Look::Selected
+                        } else {
+                            Look::Normal
+                        };
+                        if choice_card(ui, i + 1, &left[i], vec2(cw, 72.0), look_l, !run.st.matched_left[i]).clicked() {
+                            click_l = Some(i);
+                        }
+                        let wr = run.st.wrong_pair.map(|(_, r, _)| r == i).unwrap_or(false);
+                        let look_r = if run.st.matched_right[i] {
+                            Look::Faded
+                        } else if wr {
+                            Look::Wrong
+                        } else if run.st.m_right == Some(i) {
+                            Look::Selected
+                        } else {
+                            Look::Normal
+                        };
+                        if choice_card(ui, i + 1 + left.len(), &right[i], vec2(cw, 72.0), look_r, !run.st.matched_right[i]).clicked() {
+                            click_r = Some(i);
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+                if let Some(d) = digit {
+                    if d < left.len() {
+                        if !run.st.matched_left[d] {
+                            click_l = Some(d);
+                        }
+                    } else if d - left.len() < right.len() && !run.st.matched_right[d - left.len()] {
+                        click_r = Some(d - left.len());
+                    }
+                }
+                if let Some(i) = click_l {
+                    run.st.m_left = Some(i);
+                    self.audio.speak(&left[i].main, false);
+                }
+                if let Some(i) = click_r {
+                    run.st.m_right = Some(i);
+                }
+                if let (Some(l), Some(r)) = (run.st.m_left, run.st.m_right) {
+                    if right_to_left[r] == l {
+                        run.st.matched_left[l] = true;
+                        run.st.matched_right[r] = true;
+                        self.audio.effect(true);
+                    } else {
+                        run.st.wrong_pair = Some((l, r, now));
+                        run.st.match_wrong += 1;
+                        for k in [l, right_to_left[r]] {
+                            if !run.st.match_bad.contains(&k) {
+                                run.st.match_bad.push(k);
+                                if let Some(w) = ex.words.get(k) {
+                                    self.p.record(*w, false);
+                                    self.p.note_wrong(w.0, w.1, false);
+                                    let wd = &UNITS[w.0].words[w.1];
+                                    let line = format!("{} = {}", wd.th, wd.ko);
+                                    if !run.missed.contains(&line) {
+                                        run.missed.push(line);
+                                    }
+                                }
+                            }
+                        }
+                        self.audio.effect(false);
+                    }
+                    run.st.m_left = None;
+                    run.st.m_right = None;
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ summary
+
+    fn summary_screen(&mut self, ui: &mut Ui, now: f64) {
+        let Some(s) = self.summary.as_ref() else { return };
+        let mut close = false;
+        let mut again = false;
+        let mut redo = false;
+        let notebook_n = self.p.notebook.len();
+        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(surface())).show(ui, |ui| {
+            let r = ui.max_rect();
+            let top = if s.missed.is_empty() { (r.height() - 600.0).max(0.0) / 2.0 } else { 10.0 };
+            let sw = (r.width() - 32.0).min(560.0);
+            let area = Rect::from_min_max(Pos2::new(r.center().x - sw / 2.0, r.top() + top), Pos2::new(r.center().x + sw / 2.0, r.bottom()));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    let (mr, _) = ui.allocate_exact_size(vec2(220.0, if s.missed.is_empty() { 170.0 } else { 140.0 }), Sense::hover());
+                    let p = ui.painter();
+                    // confetti
+                    for k in 0..14 {
+                        let a = k as f32 * 0.9 + now as f32 * 0.6;
+                        let rad = 80.0 + (k % 3) as f32 * 12.0;
+                        let c = [PRIMARY, ORANGE, BLUE, GOLD, RED][k % 5];
+                        let pos = mr.center() + vec2(a.cos() * rad, a.sin() * rad * 0.6);
+                        p.rect_filled(Rect::from_center_size(pos, vec2(8.0, 8.0)), CornerRadius::same(2), c);
+                    }
+                    paint_mascot(p, mr.center(), 56.0, true);
+                    let title = if s.practice {
+                        if s.mistake_review { "오답 복습 완료!" } else { "연습 완료!" }
+                    } else if s.unit_finished.is_some() {
+                        "단원 완료! 축하해요"
+                    } else if s.review {
+                        "복습 완료!"
+                    } else {
+                        "레슨 완료!"
+                    };
+                    ui.label(RichText::new(title).font(bold(32.0)).color(GOLD));
+                    if let Some(u) = s.unit_finished {
+                        ui.label(RichText::new(format!("“{}” 단원을 모두 끝냈어요", UNITS[u].title)).font(font(16.0)).color(muted()));
+                    }
+                    ui.add_space(18.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 14.0;
+                        let boxes = [
+                            ("획득 XP", format!("+{}", s.xp), GOLD),
+                            ("정확도", format!("{}%", s.accuracy), PRIMARY),
+                            ("걸린 시간", format!("{}:{:02}", s.secs / 60, s.secs % 60), BLUE),
+                        ];
+                        let bw = ((sw - 28.0) / 3.0).min(160.0);
+                        let total = bw * 3.0 + 28.0;
+                        ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+                        for (label, value, c) in boxes {
+                            let (r, _) = ui.allocate_exact_size(vec2(bw, 100.0), Sense::hover());
+                            let p = ui.painter();
+                            p.rect_filled(r, CornerRadius::same(14), c);
+                            let inner = Rect::from_min_max(r.min + vec2(3.0, 32.0), r.max - vec2(3.0, 3.0));
+                            p.rect_filled(inner, CornerRadius::same(12), surface());
+                            p.text(Pos2::new(r.center().x, r.top() + 16.0), Align2::CENTER_CENTER, label, bold(14.0), WHITE);
+                            p.text(inner.center(), Align2::CENTER_CENTER, value, bold(26.0), ink(c, 0.85));
+                        }
+                    });
+                    ui.add_space(14.0);
+                    if let Some(st) = s.streak_up {
+                        ui.horizontal(|ui| {
+                            let g = ui.painter().layout_no_wrap(format!("{}일 연속 학습 중!", st), bold(18.0), ORANGE);
+                            let tw = g.size().x + 34.0;
+                            ui.add_space(((ui.available_width() - tw) / 2.0).max(0.0));
+                            let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+                            paint_flame(ui.painter(), r.center(), 28.0, ORANGE);
+                            let (r, _) = ui.allocate_exact_size(g.size(), Sense::hover());
+                            ui.painter().galley(r.min, g, ORANGE);
+                        });
+                    }
+                    if s.graduated > 0 {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(format!("오답 노트에서 {}개가 졸업했어요!", s.graduated)).font(bold(17.0)).color(GREEN));
+                    }
+                    if !s.missed.is_empty() {
+                        ui.add_space(14.0);
+                        egui::Frame::NONE
+                            .fill(red_soft())
+                            .corner_radius(CornerRadius::same(14))
+                            .inner_margin(Margin::symmetric(18, 14))
+                            .show(ui, |ui| {
+                                ui.set_width(sw - 36.0);
+                                ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+                                    ui.horizontal(|ui| {
+                                        let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                                        paint_note(ui.painter(), r.center(), 22.0, RED);
+                                        ui.label(RichText::new(format!("틀린 문제 {}개 · 오답 노트에 담았어요", s.missed.len())).font(bold(if sw < 460.0 { 14.0 } else { 16.0 })).color(ink(RED, 0.8)));
+                                    });
+                                    for line in s.missed.iter().take(6) {
+                                        ui.label(RichText::new(format!("•  {}", line)).font(font(15.0)).color(fg()));
+                                    }
+                                    if s.missed.len() > 6 {
+                                        ui.label(RichText::new(format!("그 밖에 {}개 더", s.missed.len() - 6)).font(font(13.0)).color(muted()));
+                                    }
+                                });
+                            });
+                    }
+                    ui.add_space(20.0);
+                    if button3d(ui, "계속", vec2(sw.min(320.0), 54.0), PRIMARY, true).clicked() {
+                        close = true;
+                    }
+                    ui.add_space(6.0);
+                    if notebook_n > 0 {
+                        if outline_button(ui, &format!("틀린 문제 바로 다시 풀기 ({})", notebook_n.min(12)), vec2(sw.min(320.0), 48.0), RED).clicked() {
+                            redo = true;
+                        }
+                    } else if !s.practice && outline_button(ui, "연습 한 번 더", vec2(sw.min(320.0), 48.0), BLUE).clicked() {
+                        again = true;
+                    }
+                    ui.add_space(20.0);
+                });
+                });
+            });
+        });
+        if ui.input(|i| i.key_pressed(Key::Enter)) {
+            close = true;
+        }
+        if redo {
+            self.start(LessonKind::Mistakes, now);
+        } else if again {
+            self.start(LessonKind::Practice, now);
+        } else if close {
+            self.summary = None;
+            self.tab = Tab::Learn;
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn unused(_: Vec2) {}
