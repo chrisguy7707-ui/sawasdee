@@ -53,7 +53,7 @@ min_sdk_version = 26
 target_sdk_version = 36
 
 [package.metadata.android.application]
-label = "사왓디"
+label = "사왓디-태국어 학습앱"
 icon = "@mipmap/ic_launcher"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 
