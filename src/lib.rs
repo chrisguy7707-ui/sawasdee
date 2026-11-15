@@ -30,6 +30,10 @@ pub fn desktop_main() -> eframe::Result {
         std::thread::sleep(std::time::Duration::from_millis(2500));
         return Ok(());
     }
+    if args.iter().any(|a| a == "--dump-content") {
+        print!("{}", lesson::dump_content());
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--selftest") {
         match lesson::selftest(!args.iter().any(|a| a == "--no-audio")) {
             Ok(msg) => {

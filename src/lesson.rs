@@ -1085,3 +1085,41 @@ pub fn all_speech() -> Vec<String> {
     }
     out
 }
+
+/// All course content as tab-separated lines, for the native-speaker review sheet
+/// (`sawasdee --dump-content`, see tools/export_review_sheet.py).
+/// Columns: kind, unit, number, Thai (male form), Thai (female form), Hangul pronunciation, tones, Korean meaning, note.
+pub fn dump_content() -> String {
+    use crate::data::{class_name, CONSONANTS, CONSONANTS_MORE, FINALS, TONES, TONE_RULES, VOWELS};
+    let mut out = String::new();
+    let mut line = |cols: [&str; 9]| {
+        out.push_str(&cols.join("\t"));
+        out.push('\n');
+    };
+    for (u, unit) in UNITS.iter().enumerate() {
+        let unit_name = format!("{}. {}", u + 1, unit.title);
+        for (i, w) in unit.words.iter().enumerate() {
+            line(["단어", &unit_name, &(i + 1).to_string(), w.th, "", w.pron, &format!("{} {}", w.tone, tone_marks(w.tone)), w.ko, ""]);
+        }
+        for (i, s) in unit.sentences.iter().enumerate() {
+            let tones = sentence_tones(s, false);
+            line(["문장", &unit_name, &(i + 1).to_string(), &sentence_thai(s, false), &sentence_thai(s, true), &sentence_pron(s, false), &tones, &s.korean(), ""]);
+        }
+    }
+    for c in CONSONANTS.iter().chain(CONSONANTS_MORE.iter()) {
+        line(["자음", "알파벳", c.letter, c.name, "", c.name_pron, class_name(c.class), &format!("{} · {}", c.sound, c.meaning), ""]);
+    }
+    for v in VOWELS {
+        line(["모음", "알파벳", v.form, v.example, "", v.example_pron, "", v.sound, ""]);
+    }
+    for f in FINALS {
+        line(["받침", "알파벳", f.sound, f.example, "", f.example_pron, "", &format!("글자: {} · {}", f.letters, f.example_ko), ""]);
+    }
+    for t in TONES {
+        line(["성조", "알파벳", &t.code.to_string(), t.example, "", t.example_pron, t.mark, &format!("{} · {} · {}", t.name, t.how, t.example_ko), ""]);
+    }
+    for r in TONE_RULES {
+        line(["성조 규칙", "알파벳", class_name(r.class), r.example, "", r.example_pron, &r.tone.to_string(), &format!("{} · {}", r.when, r.example_ko), ""]);
+    }
+    out
+}
