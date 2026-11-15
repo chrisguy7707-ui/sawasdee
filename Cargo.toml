@@ -59,3 +59,5 @@ theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 orientation = "portrait"
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode"
 
+# Signing: the key file and its password are NOT stored here. tools/build_android.sh passes them
+# to cargo-apk through CARGO_APK_RELEASE_KEYSTORE and CARGO_APK_RELEASE_KEYSTORE_PASSWORD.

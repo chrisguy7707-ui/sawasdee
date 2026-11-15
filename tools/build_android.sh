@@ -6,5 +6,17 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-dev/sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/26.1.10909125}"
 export PATH="$HOME/.cargo/bin:$JAVA_HOME/bin:$PATH"
+# Release signing key. The password is read from android/keystore.password (never committed)
+# or from CARGO_APK_RELEASE_KEYSTORE_PASSWORD.
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+export CARGO_APK_RELEASE_KEYSTORE="${CARGO_APK_RELEASE_KEYSTORE:-$APP_DIR/android/release.keystore}"
+if [ -z "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" ] && [ -f "$APP_DIR/android/keystore.password" ]; then
+  CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$(cat "$APP_DIR/android/keystore.password")"
+  export CARGO_APK_RELEASE_KEYSTORE_PASSWORD
+fi
+if [ ! -f "$CARGO_APK_RELEASE_KEYSTORE" ] || [ -z "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" ]; then
+  echo "Missing signing key: need android/release.keystore and android/keystore.password" >&2
+  exit 1
+fi
 cargo apk build --release --lib
 echo "APK: target/release/apk/Sawasdee.apk"

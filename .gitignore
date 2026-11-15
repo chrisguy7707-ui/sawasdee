@@ -5,3 +5,5 @@
 # 앱 서명 키: 저장소에 올리지 않음 (분실하면 같은 앱으로 업데이트 불가, 따로 백업할 것)
 /android/release.keystore
 /audio_work
+/android/release.keystore.bak
+/android/keystore.password
