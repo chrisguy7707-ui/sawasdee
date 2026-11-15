@@ -1399,6 +1399,10 @@ impl App {
 impl App {
     fn page_header(ui: &mut Ui, title: &str, sub: &str) {
         ui.add_space(26.0);
+        // the little elephant sits at the right end of the title line
+        let top = ui.cursor().top();
+        let right = ui.max_rect().right();
+        paint_mascot(ui.painter(), Pos2::new(right - 30.0, top + 18.0), 17.0, true);
         ui.label(RichText::new(title).font(bold(28.0)));
         ui.label(RichText::new(sub).font(font(15.0)).color(muted()));
         ui.add_space(14.0);
