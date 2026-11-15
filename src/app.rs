@@ -1659,7 +1659,7 @@ impl App {
                 }
             }
             ui.add_space(2.0);
-            ui.label(RichText::new("정해 둔 시각에 알림이 한 번 와요. 그날 이미 공부했으면 쉬고, 앱을 7일 동안 열지 않으면 알림이 멈춰요. 알림이 오지 않으면 휴대폰 설정에서 알림을 허용해 주세요.").font(font(13.0)).color(muted()));
+            ui.label(RichText::new("정해 둔 시각 무렵에 알림이 한 번 와요(절전 때문에 최대 1시간 늦을 수 있어요). 그날 이미 공부했으면 쉬고, 앱을 7일 동안 열지 않으면 알림이 멈춰요. 알림이 오지 않으면 휴대폰 설정에서 알림을 허용해 주세요.").font(font(13.0)).color(muted()));
             if changed {
                 self.sync_reminder();
             }
