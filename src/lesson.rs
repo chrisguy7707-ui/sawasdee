@@ -220,6 +220,10 @@ pub enum LessonKind {
     ConsonantClass,
     /// Alphabet tab: which tone does this rule give.
     ToneRules,
+    /// Alphabet tab: which sound does this letter make at the end of a syllable.
+    Finals,
+    /// Alphabet tab: read a Thai word without any help.
+    Reading,
 }
 
 /// What the generator needs to know about the learner.
@@ -780,6 +784,95 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                 });
             }
         }
+        LessonKind::Finals => {
+            let mut letters: Vec<&'static str> = crate::data::FINALS.iter().flat_map(|f| f.letters.split_whitespace()).collect();
+            letters.retain(|l| !crate::data::is_obsolete(l));
+            rng.shuffle(&mut letters);
+            for &l in letters.iter().take(10) {
+                let Some(fi) = crate::data::final_index(l) else { continue };
+                let f = &crate::data::FINALS[fi];
+                let name = crate::data::all_consonants().find(|c| c.letter == l);
+                let mut others: Vec<usize> = (0..crate::data::FINALS.len()).filter(|&j| j != fi).collect();
+                rng.shuffle(&mut others);
+                let mut opts: Vec<usize> = vec![fi];
+                opts.extend(others.into_iter().take(3));
+                rng.shuffle(&mut opts);
+                let correct = opts.iter().position(|&j| j == fi).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "받침",
+                    title: "이 글자가 받침이면 어떤 소리일까요?".into(),
+                    prompt_thai: Some(Prompt { th: l.to_string(), pron: name.map(|c| c.name_pron.to_string()).unwrap_or_default(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: name.map(|c| c.name.to_string()),
+                    listen_only: false,
+                    body: Body::Choice { options: opts.iter().map(|&j| Card::ko(crate::data::FINALS[j].sound)).collect(), correct },
+                    solution: format!("{} → {} 받침 · 예: {} ({})", l, f.sound, f.example, f.example_pron),
+                    solution_speak: Some(f.example.to_string()),
+                    words: vec![],
+                    sentence: None,
+                });
+            }
+        }
+        LessonKind::Reading => {
+            // Words the learner has met (weakest first); at the start, words of the first units.
+            let mut pool: Vec<(usize, usize)> = ctx.focus.to_vec();
+            if pool.len() < 10 {
+                for u in 0..UNITS.len().min(4) {
+                    for i in 0..UNITS[u].words.len() {
+                        if !pool.contains(&(u, i)) {
+                            pool.push((u, i));
+                        }
+                    }
+                }
+            }
+            let mut uniq: Vec<(usize, usize)> = Vec::new();
+            for &(u, i) in &pool {
+                let w = &UNITS[u].words[i];
+                // Words with only a one-letter-wide sound make dull questions.
+                if w.th.chars().count() >= 2 && !uniq.iter().any(|&(a, b)| UNITS[a].words[b].th == w.th) {
+                    uniq.push((u, i));
+                }
+            }
+            rng.shuffle(&mut uniq);
+            let all: Vec<(usize, usize)> = (0..UNITS.len()).flat_map(|u| (0..UNITS[u].words.len()).map(move |i| (u, i))).collect();
+            for &(u, i) in uniq.iter().take(10) {
+                let w = &UNITS[u].words[i];
+                let len = w.pron.chars().count();
+                // Wrong answers: other words that sound about as long, so the length gives nothing away.
+                let mut near: Vec<usize> = (0..all.len())
+                    .filter(|&k| {
+                        let o = &UNITS[all[k].0].words[all[k].1];
+                        o.pron != w.pron && o.pron.chars().count().abs_diff(len) <= 1
+                    })
+                    .collect();
+                rng.shuffle(&mut near);
+                let mut prons: Vec<&str> = vec![w.pron];
+                for k in near {
+                    let o = &UNITS[all[k].0].words[all[k].1];
+                    if !prons.contains(&o.pron) {
+                        prons.push(o.pron);
+                    }
+                    if prons.len() == 4 {
+                        break;
+                    }
+                }
+                rng.shuffle(&mut prons);
+                let correct = prons.iter().position(|&p| p == w.pron).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "읽기",
+                    title: "이 단어는 어떻게 읽을까요?".into(),
+                    prompt_thai: Some(Prompt { th: w.th.to_string(), pron: String::new(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: None,
+                    listen_only: false,
+                    body: Body::Choice { options: prons.iter().map(|p| Card::ko(p)).collect(), correct },
+                    solution: format!("{} = {} · {}", w.th, w.pron, w.ko),
+                    solution_speak: Some(w.th.to_string()),
+                    words: vec![(u, i)],
+                    sentence: None,
+                });
+            }
+        }
         LessonKind::Mistakes => {
             let cycle = [Kind::Thai, Kind::Meaning, Kind::Listen, Kind::Tone];
             let (mut wc, mut sc) = (0usize, 0usize);
@@ -866,7 +959,7 @@ pub fn selftest(check_audio: bool) -> Result<String, String> {
             check_ex(&ex, seed % 2 == 0)?;
             n += 1;
         }
-        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules] {
+        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules, LessonKind::Finals, LessonKind::Reading] {
             for focus_set in [&[][..], &focus[..]] {
                 let es = build(kind, &mut rng, &Ctx { tts: true, female: false, focus: focus_set, mistakes: &[] });
                 if es.len() < 8 {

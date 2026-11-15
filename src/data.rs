@@ -1066,6 +1066,31 @@ pub fn is_obsolete(letter: &str) -> bool {
     letter == "ฃ" || letter == "ฅ"
 }
 
+/// Final consonant sounds: eight sounds cover every letter that can end a syllable.
+pub struct Final {
+    pub sound: &'static str,
+    pub letters: &'static str,
+    pub example: &'static str,
+    pub example_pron: &'static str,
+    pub example_ko: &'static str,
+}
+
+pub static FINALS: &[Final] = &[
+    Final { sound: "ㄱ (k)", letters: "ก ข ค ฆ", example: "รัก", example_pron: "락", example_ko: "사랑하다" },
+    Final { sound: "ㄷ (t)", letters: "จ ช ซ ฎ ฏ ฐ ฑ ฒ ด ต ถ ท ธ ศ ษ ส", example: "เจ็ด", example_pron: "쩻", example_ko: "7 (일곱)" },
+    Final { sound: "ㅂ (p)", letters: "บ ป พ ฟ ภ", example: "รูป", example_pron: "룹", example_ko: "사진, 그림" },
+    Final { sound: "ㅇ (ng)", letters: "ง", example: "ห้อง", example_pron: "헝", example_ko: "방" },
+    Final { sound: "ㄴ (n)", letters: "น ญ ณ ร ล ฬ", example: "กิน", example_pron: "낀", example_ko: "먹다" },
+    Final { sound: "ㅁ (m)", letters: "ม", example: "นม", example_pron: "놈", example_ko: "우유" },
+    Final { sound: "이 (y)", letters: "ย", example: "ไทย", example_pron: "타이", example_ko: "태국" },
+    Final { sound: "우 (w)", letters: "ว", example: "เร็ว", example_pron: "레우", example_ko: "빠르다" },
+];
+
+/// Which final sound a letter makes at the end of a syllable (index into FINALS).
+pub fn final_index(letter: &str) -> Option<usize> {
+    FINALS.iter().position(|f| f.letters.split_whitespace().any(|l| l == letter))
+}
+
 /// How a consonant class, the syllable ending and the tone mark decide the tone.
 pub struct ToneRule {
     /// 0 mid, 1 high, 2 low consonant class.

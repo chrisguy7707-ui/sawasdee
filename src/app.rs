@@ -462,10 +462,6 @@ impl App {
                         run.st.placed = vec![0, 1];
                     }
                 }
-                "tones" => {
-                    app.tab = Tab::Letters;
-                    app.letters_page = 3;
-                }
                 "letters-more" => {
                     app.tab = Tab::Letters;
                     app.letters_page = 1;
@@ -474,9 +470,17 @@ impl App {
                     app.tab = Tab::Letters;
                     app.letters_page = 2;
                 }
-                "tone-rules" => {
+                "finals" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 3;
+                }
+                "tones" => {
                     app.tab = Tab::Letters;
                     app.letters_page = 4;
+                }
+                "tone-rules" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 5;
                 }
                 "words" => app.tab = Tab::Words,
                 "profile" => app.tab = Tab::Profile,
@@ -583,7 +587,7 @@ impl App {
     fn finish(&mut self, run: Run, now: f64) {
         let t = today();
         let (xp, practice, review) = match run.kind {
-            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules => (5 + run.first_right.min(5) as u32, true, false),
+            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules | LessonKind::Finals | LessonKind::Reading => (5 + run.first_right.min(5) as u32, true, false),
             LessonKind::Normal { lesson, .. } => {
                 let base = if lesson == LESSONS_PER_UNIT - 1 { 20 } else { 10 };
                 (base + if run.mistakes == 0 { 5 } else { 0 }, false, lesson == LESSONS_PER_UNIT - 1)
@@ -1388,29 +1392,31 @@ impl App {
                 ui.vertical(|ui| {
                     ui.set_width(col_w);
                     Self::page_header(ui, "알파벳 학습", "태국 글자를 눌러 소리를 들어 보고, 아래 퀴즈로 연습해 보세요.");
-                    ui.label(RichText::new("퀴즈").font(bold(19.0)));
+                    ui.label(RichText::new("퀴즈 (각 10문제)").font(bold(19.0)));
                     ui.add_space(6.0);
                     let now = ui.input(|i| i.time);
                     for (label, kind) in [
-                        ("자음 이름 읽기 (10문제)", LessonKind::Letters),
-                        ("모음 소리 맞추기 (10문제)", LessonKind::Vowels),
-                        ("단어 글자 맞추기 (10문제)", LessonKind::Spelling),
-                        ("자음 계급 맞추기 (10문제)", LessonKind::ConsonantClass),
-                        ("성조 규칙 맞추기 (10문제)", LessonKind::ToneRules),
+                        ("자음 이름 읽기", LessonKind::Letters),
+                        ("자음 계급 맞추기", LessonKind::ConsonantClass),
+                        ("모음 소리 맞추기", LessonKind::Vowels),
+                        ("받침 소리 맞추기", LessonKind::Finals),
+                        ("성조 규칙 맞추기", LessonKind::ToneRules),
+                        ("단어 글자 맞추기", LessonKind::Spelling),
+                        ("단어 읽기 연습", LessonKind::Reading),
                     ] {
-                        if button3d(ui, label, vec2(col_w.min(420.0), 50.0), ORANGE, true).clicked() {
+                        if button3d(ui, label, vec2(col_w.min(420.0), 46.0), ORANGE, true).clicked() {
                             self.start(kind, now);
                         }
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                     }
                     ui.add_space(10.0);
                     ui.label(RichText::new("글자표").font(bold(19.0)));
                     ui.label(RichText::new("글자를 눌러 소리를 들어 보세요. 자음은 성조 규칙에 따라 세 무리로 나뉘어요.").font(font(14.0)).color(muted()));
                     ui.add_space(8.0);
-                    // pages: 0 basic consonants, 1 other consonants, 2 vowels, 3 the five tones, 4 tone rules
+                    // pages: 0 basic consonants, 1 other consonants, 2 vowels, 3 final sounds, 4 the five tones, 5 tone rules
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                        for (v, label) in [(0u8, "자음 28자"), (1, "자음 16자"), (2, "모음 23개"), (3, "성조 5개"), (4, "성조 규칙")] {
+                        for (v, label) in [(0u8, "자음 28자"), (1, "자음 16자"), (2, "모음 23개"), (3, "받침 8개"), (4, "성조 5개"), (5, "성조 규칙")] {
                             let sel = self.letters_page == v;
                             let r = if sel {
                                 button3d(ui, label, vec2(108.0, 44.0), PRIMARY, true)
@@ -1486,6 +1492,8 @@ impl App {
                             ui.add_space(6.0);
                         }
                     } else if self.letters_page == 3 {
+                        self.finals_page(ui, col_w);
+                    } else if self.letters_page == 4 {
                         ui.label(RichText::new("태국어에는 성조가 5개 있어요. 한글로 똑같이 '마이'라고 써도, 성조가 다르면 전혀 다른 말이 돼요. 눌러서 들어 보세요.").font(font(15.0)).color(muted()));
                         ui.add_space(8.0);
                         for t in TONES {
@@ -1536,6 +1544,37 @@ impl App {
                     ui.add_space(30.0);
                 });
             });
+        });
+    }
+
+    /// "받침 8개" page: every letter that can end a syllable makes one of eight sounds.
+    fn finals_page(&mut self, ui: &mut Ui, col_w: f32) {
+        ui.label(RichText::new("받침(음절 끝에 오는 자음)은 글자가 많아도 소리는 8가지뿐이에요. 같은 소리끼리 묶어서 외워 보세요.").font(font(15.0)).color(muted()));
+        ui.add_space(8.0);
+        for f in crate::data::FINALS {
+            card_frame().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                ui.set_width(col_w - 32.0);
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(col_w - 120.0);
+                        ui.label(RichText::new(f.sound).font(bold(20.0)).color(ORANGE));
+                        ui.label(RichText::new(f.letters).font(bold(20.0)));
+                        ui.label(RichText::new(format!("예: {}  {} · {}", f.example, f.example_pron, f.example_ko)).font(font(15.0)).color(muted()));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if small_speaker(ui, BLUE).clicked() {
+                            self.audio.speak(f.example, true);
+                        }
+                    });
+                });
+            });
+            ui.add_space(6.0);
+        }
+        card_frame().show(ui, |ui| {
+            ui.set_width(col_w - 32.0);
+            ui.label(RichText::new("알아 두세요").font(bold(17.0)));
+            ui.add_space(4.0);
+            ui.label(RichText::new("ฉ ผ ฝ ห อ ฮ 같은 글자는 받침으로 거의 쓰이지 않아요. 받침 ร ล ฬ는 ㄴ 소리가 나요(예: บ้าน 반). 받침이 ㄱ ㄷ ㅂ이면 죽은 음절이라 성조 규칙이 달라져요.").font(font(14.0)).color(muted()));
         });
     }
 
@@ -2173,6 +2212,8 @@ impl App {
                     LessonKind::Vowels => ("모음".to_string(), ORANGE),
                     LessonKind::ConsonantClass => ("계급".to_string(), ORANGE),
                     LessonKind::ToneRules => ("성조".to_string(), ORANGE),
+                    LessonKind::Finals => ("받침".to_string(), ORANGE),
+                    LessonKind::Reading => ("읽기".to_string(), ORANGE),
                     _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
                 };
                 paint_note(p, hc, 26.0, c);
