@@ -503,7 +503,12 @@ impl App {
                     app.tab = Tab::Letters;
                     app.letters_page = 7;
                 }
-                "words" => app.tab = Tab::Words,
+                "words" => {
+                    app.tab = Tab::Words;
+                    for u in 0..3 {
+                        app.p.done[u] = 5;
+                    }
+                }
                 "profile" => app.tab = Tab::Profile,
                 "notebook" => {
                     app.tab = Tab::Notebook;
@@ -2053,16 +2058,24 @@ impl App {
                             ui.set_width(col_w - 20.0);
                             for (i, wd) in unit.words.iter().enumerate() {
                                 let known = self.p.word_learned(u, i);
-                                let (rect, _) = ui.allocate_exact_size(vec2(col_w - 20.0, 48.0), Sense::hover());
+                                // on a phone the row needs three lines, or the meaning runs under the speaker button
+                                let narrow = col_w < 560.0;
+                                let (rect, _) = ui.allocate_exact_size(vec2(col_w - 20.0, if narrow { 82.0 } else { 48.0 }), Sense::hover());
                                 let p = ui.painter();
                                 if i > 0 {
                                     p.line_segment([rect.left_top() + vec2(10.0, 0.0), rect.right_top() - vec2(10.0, 0.0)], Stroke::new(1.0, border()));
                                 }
                                 let y = rect.center().y;
                                 if known {
-                                    p.text(Pos2::new(rect.left() + 14.0, y), Align2::LEFT_CENTER, wd.th, bold(22.0), fg());
-                                    paint_pron(p, Pos2::new(rect.left() + 180.0, y), false, wd.pron, &crate::data::tone_marks(wd.tone), 15.0);
-                                    p.text(Pos2::new(rect.left() + 330.0, y), Align2::LEFT_CENTER, wd.ko, font(15.5), fg());
+                                    if narrow {
+                                        p.text(Pos2::new(rect.left() + 14.0, y - 26.0), Align2::LEFT_CENTER, wd.th, bold(22.0), fg());
+                                        paint_pron(p, Pos2::new(rect.left() + 14.0, y + 1.0), false, wd.pron, &crate::data::tone_marks(wd.tone), 14.5);
+                                        p.text(Pos2::new(rect.left() + 14.0, y + 25.0), Align2::LEFT_CENTER, wd.ko, font(15.0), fg());
+                                    } else {
+                                        p.text(Pos2::new(rect.left() + 14.0, y), Align2::LEFT_CENTER, wd.th, bold(22.0), fg());
+                                        paint_pron(p, Pos2::new(rect.left() + 180.0, y), false, wd.pron, &crate::data::tone_marks(wd.tone), 15.0);
+                                        p.text(Pos2::new(rect.left() + 330.0, y), Align2::LEFT_CENTER, wd.ko, font(15.5), fg());
+                                    }
                                     // memory strength: 4 bars
                                     let level = self.p.stat(u, i).map(|s| s.level).unwrap_or(0);
                                     let bars = ((level as usize) + 1).min(4);
@@ -2084,7 +2097,7 @@ impl App {
                                     }
                                 } else {
                                     p.text(Pos2::new(rect.left() + 14.0, y), Align2::LEFT_CENTER, wd.th, bold(22.0), faint());
-                                    p.text(Pos2::new(rect.left() + 190.0, y), Align2::LEFT_CENTER, "? ? ?", font(15.0), faint());
+                                    p.text(Pos2::new(rect.left() + if narrow { 150.0 } else { 190.0 }, y), Align2::LEFT_CENTER, "? ? ?", font(15.0), faint());
                                     paint_lock(p, Pos2::new(rect.right() - 28.0, y), 20.0, faint());
                                 }
                             }
