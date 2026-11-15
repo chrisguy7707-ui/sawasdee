@@ -490,6 +490,14 @@ impl App {
         }
         // Demo states, used for checking screens.
         if let Some(o) = open.as_deref() {
+            // "light:<screen>" draws the screen in the light theme (test pictures)
+            let o = match o.strip_prefix("light:") {
+                Some(rest) => {
+                    app.p.theme = 1;
+                    rest
+                }
+                None => o,
+            };
             match o {
                 "letters" | "phone-letters" => app.tab = Tab::Letters,
                 "dark" => app.p.theme = 2,
@@ -943,7 +951,7 @@ impl App {
             .frame(egui::Frame::NONE.fill(surface()))
             .show(ui, |ui| {
                 let full = ui.max_rect();
-                ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(2.0, border()));
+                ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(1.0, border()));
                 let tabs = [(Tab::Learn, "학습"), (Tab::Letters, "알파벳"), (Tab::Words, "단어장"), (Tab::Notebook, "오답"), (Tab::Profile, "내 정보")];
                 let w = full.width() / tabs.len() as f32;
                 for (k, (tab, label)) in tabs.iter().enumerate() {
@@ -953,6 +961,9 @@ impl App {
                     let p = ui.painter();
                     let col = if sel { PRIMARY } else { muted() };
                     let ic = Pos2::new(r.center().x, r.top() + 20.0);
+                    if sel {
+                        p.rect_filled(Rect::from_center_size(ic, vec2(52.0, 30.0)), CornerRadius::same(15), primary_soft());
+                    }
                     match tab {
                         Tab::Learn => paint_star(p, ic, 11.0, if sel { GOLD } else { col }),
                         Tab::Letters => {
@@ -968,7 +979,7 @@ impl App {
                             p.rect_filled(Rect::from_min_size(ic + vec2(-10.0, 9.0), vec2(20.0, 10.0)), CornerRadius::ZERO, surface());
                         }
                     }
-                    p.text(Pos2::new(r.center().x, r.bottom() - 14.0), Align2::CENTER_CENTER, *label, bold(12.0), col);
+                    p.text(Pos2::new(r.center().x, r.bottom() - 12.0), Align2::CENTER_CENTER, *label, if sel { bold(11.5) } else { font(11.5) }, col);
                     if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                         self.tab = *tab;
                     }
@@ -1216,21 +1227,41 @@ impl App {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
         let p = ui.painter();
         let y = rect.center().y;
-        let x0 = rect.left() + 6.0;
-        paint_flag(p, Rect::from_center_size(Pos2::new(x0 + 18.0, y), vec2(34.0, 24.0)));
-        let streak = self.p.streak_now();
-        let step = (rect.width() - 50.0) / 3.0;
-        let sx = x0 + 50.0;
+        // wordmark: the little elephant and the app name
+        paint_mascot(p, Pos2::new(rect.left() + 16.0, y + 1.0), 12.0, true);
+        if rect.width() > 300.0 {
+            p.text(Pos2::new(rect.left() + 36.0, y), Align2::LEFT_CENTER, "사왓디", bold(17.0), fg());
+        }
+        // stat chips, right-aligned: streak, XP, mistake notebook
         let streak_active = self.p.last_day == today();
-        paint_flame(p, Pos2::new(sx + 12.0, y), 26.0, if streak_active { ORANGE } else { locked() });
-        p.text(Pos2::new(sx + 30.0, y), Align2::LEFT_CENTER, streak.to_string(), bold(18.0), if streak_active { ORANGE } else { muted() });
-        paint_bolt(p, Pos2::new(sx + step + 12.0, y), 26.0, GOLD);
-        p.text(Pos2::new(sx + step + 30.0, y), Align2::LEFT_CENTER, self.p.xp_total.to_string(), bold(18.0), Color32::from_rgb(230, 170, 0));
         let n = self.p.notebook.len();
-        let nc = if n > 0 { RED } else { muted() };
-        paint_note(p, Pos2::new(sx + step * 2.0 + 12.0, y), 26.0, nc);
-        p.text(Pos2::new(sx + step * 2.0 + 30.0, y), Align2::LEFT_CENTER, n.to_string(), bold(18.0), nc);
-        let tip = ui.interact(Rect::from_min_size(Pos2::new(sx + step * 2.0, rect.top()), vec2(step, 40.0)), ui.scope_id().with("note_tip"), Sense::click());
+        let chips: [(u8, String, Color32, bool); 3] = [
+            (0, self.p.streak_now().to_string(), ORANGE, streak_active),
+            (1, self.p.xp_total.to_string(), GOLD, self.p.xp_total > 0),
+            (2, n.to_string(), RED, n > 0),
+        ];
+        let mut x = rect.right() - 4.0;
+        let mut note_rect = Rect::NOTHING;
+        for (kind, text, color, on) in chips.iter().rev() {
+            let g = p.layout_no_wrap(text.clone(), bold(14.0), if *on { ink(*color, 0.8) } else { muted() });
+            let w = 34.0 + g.size().x + 12.0;
+            let chip = Rect::from_min_max(Pos2::new(x - w, y - 15.0), Pos2::new(x, y + 15.0));
+            p.rect_filled(chip, CornerRadius::same(15), if *on { lighten(*color, 0.86) } else { hover() });
+            let ic = Pos2::new(chip.left() + 18.0, y);
+            let icol = if *on { *color } else { faint() };
+            match kind {
+                0 => paint_flame(p, ic, 18.0, icol),
+                1 => paint_bolt(p, ic, 18.0, icol),
+                _ => paint_note(p, ic, 17.0, icol),
+            }
+            let tcol = if *on { ink(*color, 0.8) } else { muted() };
+            p.galley(Pos2::new(chip.left() + 31.0, y - g.size().y / 2.0), g, tcol);
+            if *kind == 2 {
+                note_rect = chip;
+            }
+            x = chip.left() - 8.0;
+        }
+        let tip = ui.interact(note_rect, ui.scope_id().with("note_tip"), Sense::click());
         if tip.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("오답 노트: 틀린 문제 수 (눌러서 열기)").clicked() {
             self.tab = Tab::Notebook;
         }
@@ -1423,6 +1454,7 @@ impl App {
                 ui.add_space(26.0);
                 let sign = if u % 2 == 0 { -1.0 } else { 1.0 };
                 let offsets = [0.0, 62.0, 96.0, 62.0, 0.0];
+                let mut prev_node: Option<Pos2> = None;
                 for l in 0..LESSONS_PER_UNIT {
                     let (row, _) = ui.allocate_exact_size(vec2(full, 100.0), Sense::hover());
                     let c = Pos2::new(left + col_w / 2.0 + sign * offsets[l], row.center().y);
@@ -1443,6 +1475,15 @@ impl App {
                     };
                     let pressed = resp.is_pointer_button_down_on() && state != 0;
                     let lift = if pressed { 6.0 } else { 0.0 };
+                    // dotted path from the previous node (only the middle part, clear of both nodes)
+                    if let Some(pc) = prev_node {
+                        for k in 0..4 {
+                            let t = 0.36 + 0.093 * k as f32;
+                            let dot = pc + (c - pc) * t;
+                            p.circle_filled(dot, 3.0, if state == 0 { track() } else { lighten(color, 0.45) });
+                        }
+                    }
+                    prev_node = Some(c);
                     if state == 2 {
                         // ring
                         let mut ring = diamond_points(c + vec2(0.0, 3.0), r + 13.0, 1.45);
@@ -1452,10 +1493,18 @@ impl App {
                         let part: Vec<Pos2> = ring[30..].iter().chain(ring[..1].iter()).copied().collect();
                         p.add(egui::Shape::line(part, Stroke::new(5.0, color)));
                     }
-                    paint_diamond(p, c + vec2(0.0, 7.0), r + 4.0, Color32::from_rgba_unmultiplied(40, 44, 90, if is_dark() { 60 } else { 28 }));
                     let _ = edge;
-                    let fc = if resp.hovered() && state != 0 { lighten(face, 0.08) } else { face };
-                    paint_diamond(p, c + vec2(0.0, lift), r + 3.0, fc);
+                    if state == 0 {
+                        // locked: a quiet outline instead of a heavy grey block
+                        let mut outline = diamond_points(c, r + 1.0, 1.4);
+                        p.add(egui::Shape::convex_polygon(outline.clone(), surface(), Stroke::NONE));
+                        outline.push(outline[0]);
+                        p.add(egui::Shape::line(outline, Stroke::new(2.0, border())));
+                    } else {
+                        paint_diamond(p, c + vec2(0.0, 6.0), r + 3.0, Color32::from_rgba_unmultiplied(40, 44, 90, if is_dark() { 60 } else { 24 }));
+                        let fc = if resp.hovered() { lighten(face, 0.08) } else { face };
+                        paint_diamond(p, c + vec2(0.0, lift), r + 3.0, fc);
+                    }
                     let ic = c + vec2(0.0, lift);
                     let review = l == LESSONS_PER_UNIT - 1;
                     match state {
@@ -1638,9 +1687,9 @@ impl App {
                                     let p = ui.painter();
                                     let col = [PRIMARY, ORANGE, BLUE][cons.class as usize];
                                     let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
-                                    p.rect_filled(rect, CornerRadius::same(14), border());
-                                    p.rect_filled(face, CornerRadius::same(14), if resp.hovered() { lighten(col, 0.9) } else { surface() });
-                                    p.rect_stroke(face, CornerRadius::same(14), Stroke::new(2.0, if resp.hovered() { lighten(col, 0.4) } else { border() }), StrokeKind::Inside);
+                                    soft_shadow(p, face, CornerRadius::same(16), 0.6);
+                                    p.rect_filled(face, CornerRadius::same(16), if resp.hovered() { lighten(col, 0.9) } else { surface() });
+                                    p.rect_stroke(face, CornerRadius::same(16), Stroke::new(1.2, if resp.hovered() { lighten(col, 0.4) } else { border() }), StrokeKind::Inside);
                                     p.text(face.center_top() + vec2(0.0, 12.0), Align2::CENTER_TOP, cons.letter, bold(42.0), col);
                                     p.text(face.center_top() + vec2(0.0, 72.0), Align2::CENTER_TOP, cons.name_pron, bold(13.5), fg());
                                     p.text(face.center_top() + vec2(0.0, 93.0), Align2::CENTER_TOP, format!("{} · {}", cons.sound, cons.meaning), font(12.0), muted());
@@ -2364,8 +2413,7 @@ impl App {
                             }
                             let done = have >= need;
                             let badge = Rect::from_center_size(Pos2::new(r.left() + 30.0, r.center().y), vec2(48.0, 50.0));
-                            p.rect_filled(badge.translate(vec2(0.0, 3.0)), CornerRadius::same(12), if done { darken(*c, 0.8) } else { darken(locked(), 0.88) });
-                            p.rect_filled(badge, CornerRadius::same(12), if done { *c } else { locked() });
+                            p.rect_filled(badge, CornerRadius::same(14), if done { *c } else { hover() });
                             paint_star(p, badge.center(), 14.0, if done { WHITE } else { faint() });
                             p.text(Pos2::new(r.left() + 68.0, r.center().y - 14.0), Align2::LEFT_CENTER, *name, bold(16.0), fg());
                             p.text(Pos2::new(r.left() + 68.0, r.center().y + 6.0), Align2::LEFT_CENTER, *desc, font(13.0), muted());
@@ -2497,8 +2545,8 @@ impl App {
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
         let p = ui.painter();
         let (fill, border) = if selected { (lighten(accent, 0.86), accent) } else if resp.hovered() { (hover(), border()) } else { (surface(), border()) };
-        p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, 4.0), rect.max), CornerRadius::same(16), if selected { darken(accent, 0.85) } else { crate::kit::border() });
         let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 4.0));
+        soft_shadow(p, face, CornerRadius::same(16), if selected { 1.0 } else { 0.6 });
         p.rect_filled(face, CornerRadius::same(16), fill);
         p.rect_stroke(face, CornerRadius::same(16), Stroke::new(2.0, border), StrokeKind::Inside);
         p.text(face.left_top() + vec2(20.0, 18.0), Align2::LEFT_TOP, title, bold(19.0), if selected { ink(accent, 0.8) } else { fg() });
@@ -2607,14 +2655,14 @@ impl App {
                 let close = Rect::from_center_size(Pos2::new(row.left() + 16.0, row.center().y), vec2(36.0, 36.0));
                 let resp = ui.interact(close, ui.scope_id().with("close"), Sense::click());
                 let p = ui.painter();
-                paint_cross(p, close.center(), 30.0, if resp.hovered() { fg() } else { muted() }, 4.0);
+                paint_cross(p, close.center(), 22.0, if resp.hovered() { fg() } else { muted() }, 3.0);
                 if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                     run.confirm_quit = true;
                 }
                 // progress bar
                 let total = run.queue.len().max(1);
                 let done = run.pos + if run.feedback == Some(true) { 1 } else { 0 };
-                let bar = Rect::from_min_max(Pos2::new(row.left() + 52.0, row.center().y - 9.0), Pos2::new(row.right() - 90.0, row.center().y + 9.0));
+                let bar = Rect::from_min_max(Pos2::new(row.left() + 52.0, row.center().y - 6.0), Pos2::new(row.right() - 90.0, row.center().y + 6.0));
                 let p = ui.painter();
                 progress_bar(p, bar, done as f32 / total as f32, PRIMARY);
                 if run.combo >= 3 {
@@ -2998,7 +3046,7 @@ impl App {
             ui.painter().galley(r.center() - g.size() / 2.0, g, c);
         });
         ui.add_space(6.0);
-        ui.label(RichText::new(&ex.title).font(bold(26.0)));
+        ui.label(RichText::new(&ex.title).font(bold(23.0)));
         ui.add_space(16.0);
 
         // prompt
@@ -3212,7 +3260,7 @@ impl App {
                 let back = run.st.flipped && !*shadow;
                 let p = ui.painter();
                 let fill = if back { primary_soft() } else { surface() };
-                p.rect_filled(rect.translate(vec2(0.0, 4.0)), CornerRadius::same(22), border());
+                soft_shadow(p, rect, CornerRadius::same(22), 0.8);
                 p.rect_filled(rect, CornerRadius::same(22), fill);
                 p.rect_stroke(rect, CornerRadius::same(22), Stroke::new(2.0, if back { PRIMARY } else { border() }), StrokeKind::Inside);
                 let cx = rect.center().x;
