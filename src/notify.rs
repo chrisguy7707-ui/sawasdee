@@ -94,6 +94,15 @@ pub fn rec_path() -> Option<String> {
     imp::rec_path()
 }
 
+/// True once each time the Back button/gesture was used (Android only).
+pub fn back_pressed() -> bool {
+    imp::back_pressed()
+}
+/// Closes the app (Android only; Back on the first screen).
+pub fn exit_app() {
+    imp::exit_app();
+}
+
 // ------------------------------------------------------------------------- iPhone
 #[cfg(target_os = "ios")]
 mod imp {
@@ -128,6 +137,11 @@ mod imp {
             Some(s)
         }
     }
+
+    pub fn back_pressed() -> bool {
+        false
+    }
+    pub fn exit_app() {}
 
     pub fn rec_start() -> super::RecStart {
         // SAFETY: plain functions from ios/Sawasdee/main.m.
@@ -229,6 +243,16 @@ mod imp {
         result.ok()
     }
 
+    pub fn back_pressed() -> bool {
+        with_class("com.sawasdee.thai.MainActivity", |env, _act, cls| Ok(env.call_static_method(cls, "consumeBack", "()Z", &[])?.z()?)).unwrap_or(false)
+    }
+    pub fn exit_app() {
+        with_class("com.sawasdee.thai.MainActivity", |env, act, cls| {
+            env.call_static_method(cls, "exitApp", "(Landroid/app/Activity;)V", &[JValue::Object(act)])?;
+            Ok(())
+        });
+    }
+
     pub fn rec_start() -> super::RecStart {
         match with_class("com.sawasdee.thai.Recorder", |env, act, cls| {
             Ok(env.call_static_method(cls, "start", "(Landroid/app/Activity;)I", &[JValue::Object(act)])?.i()?)
@@ -328,6 +352,10 @@ pub use imp::init as init_android;
 // ---------------------------------------------------------------------- computers
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod imp {
+    pub fn back_pressed() -> bool {
+        false
+    }
+    pub fn exit_app() {}
     pub fn rec_start() -> super::RecStart {
         super::RecStart::Unsupported
     }

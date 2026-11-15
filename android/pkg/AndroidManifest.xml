@@ -17,7 +17,7 @@
         android:debuggable="false">
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".MainActivity"
             android:label="사왓디"
             android:exported="true"
             android:screenOrientation="portrait"

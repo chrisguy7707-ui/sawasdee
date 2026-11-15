@@ -35,7 +35,7 @@ pub fn surface() -> Color32 { pick((255, 255, 255), (27, 30, 42)) }
 /// Main text.
 pub fn fg() -> Color32 { pick((26, 30, 48), (232, 235, 245)) }
 /// Secondary text.
-pub fn muted() -> Color32 { pick((112, 120, 144), (146, 154, 178)) }
+pub fn muted() -> Color32 { pick((96, 104, 128), (150, 158, 182)) }
 pub fn border() -> Color32 { pick((228, 231, 242), (46, 51, 70)) }
 pub fn primary_soft() -> Color32 { pick((232, 231, 255), (40, 38, 88)) }
 pub fn green_soft() -> Color32 { pick((220, 248, 236), (18, 62, 48)) }
@@ -113,6 +113,7 @@ pub fn text_size(ui: &Ui, text: &str, f: FontId) -> Vec2 {
 
 /// A flat pill button with a soft shadow (name kept from the old 3D look).
 pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: bool) -> Response {
+    let size = vec2(size.x, size.y.max(48.0)); // at least 48 dp tall so it is easy to hit
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let pressed = enabled && resp.is_pointer_button_down_on();
@@ -144,6 +145,7 @@ pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: boo
 
 /// Surface-coloured button with a thin outline.
 pub fn outline_button(ui: &mut Ui, text: &str, size: Vec2, text_color: Color32) -> Response {
+    let size = vec2(size.x, size.y.max(48.0));
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let pressed = resp.is_pointer_button_down_on();
     let p = ui.painter();
@@ -198,6 +200,19 @@ fn paint_card_frame(p: &Painter, rect: Rect, look: Look, hovered: bool, radius: 
     p.rect_stroke(face, r, Stroke::new(w, border), StrokeKind::Inside);
 }
 
+/// Lays out bold text so that it fits on one line if it can: the font shrinks step by step down to `min`,
+/// and only then does the text wrap.
+pub fn fit_text(p: &Painter, text: &str, size: f32, min: f32, color: Color32, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut s = size;
+    loop {
+        let g = p.layout_no_wrap(text.to_string(), bold(s), color);
+        if g.size().x <= width || s <= min {
+            return if g.size().x <= width { g } else { p.layout(text.to_string(), bold(s), color, width) };
+        }
+        s -= 1.0;
+    }
+}
+
 /// A big answer card used by choice exercises.
 pub fn choice_card(ui: &mut Ui, number: usize, card: &Card, size: Vec2, look: Look, interactive: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, if interactive { Sense::click() } else { Sense::hover() });
@@ -221,9 +236,12 @@ pub fn choice_card(ui: &mut Ui, number: usize, card: &Card, size: Vec2, look: Lo
             paint_pron(p, Pos2::new(x, face.center().y + 17.0), false, &card.sub, &card.tones, 14.0);
         }
     } else if card.sub.is_empty() {
-        p.text(Pos2::new(x, face.center().y), Align2::LEFT_CENTER, &card.main, bold(if compact { 15.0 } else { 18.0 }), text_c);
+        // long Korean text wraps inside the card instead of running out of it
+        let g = fit_text(p, &card.main, if compact { 15.0 } else { 18.0 }, 12.0, text_c, (face.right() - x - 12.0).max(40.0));
+        p.galley(Pos2::new(x, face.center().y - g.size().y / 2.0), g, text_c);
     } else {
-        p.text(Pos2::new(x, face.center().y - 10.0), Align2::LEFT_CENTER, &card.main, bold(18.0), text_c);
+        let g = fit_text(p, &card.main, 18.0, 13.0, text_c, (face.right() - x - 12.0).max(40.0));
+        p.galley(Pos2::new(x, face.center().y - 10.0 - g.size().y / 2.0 + 9.0), g, text_c);
         p.text(Pos2::new(x, face.center().y + 14.0), Align2::LEFT_CENTER, &card.sub, font(13.0), muted());
     }
     if interactive {

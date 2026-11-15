@@ -368,6 +368,7 @@ pub struct App {
     /// "Compare my voice" practice on the listen-and-repeat card.
     rec: RecUi,
     rec_key: usize,
+    back_polled: f64,
     /// Pitch shapes (semitones, 60 points) of the native clip and of the learner's recording.
     rec_native: Vec<f32>,
     rec_mine: Vec<f32>,
@@ -466,6 +467,7 @@ impl App {
             backup_input: String::new(),
             rec: RecUi::Idle,
             rec_key: usize::MAX,
+            back_polled: 0.0,
             rec_native: Vec::new(),
             rec_mine: Vec::new(),
             backup_pending: None,
@@ -741,6 +743,30 @@ impl eframe::App for App {
             let band = if self.splash { Color32::from_rgb(38, 34, 112) } else { bg() };
             egui::Panel::top("ios_top").exact_size(top).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
             egui::Panel::bottom("ios_bottom").exact_size(bottom).show_separator_line(false).frame(egui::Frame::NONE.fill(bg())).show(ui, |_| {});
+        }
+        // the Back button / gesture (Android): step back one level, and exit from the first screen
+        let t_now = ui.input(|i| i.time);
+        if t_now - self.back_polled > 0.06 {
+            self.back_polled = t_now;
+            if notify::back_pressed() {
+                if let Some(run) = self.run.as_mut() {
+                    run.confirm_quit = !run.confirm_quit;
+                } else if self.summary.is_some() {
+                    self.summary = None;
+                } else if self.splash || self.p.gender == 0 {
+                    notify::exit_app();
+                } else if self.tab != Tab::Learn {
+                    self.tab = Tab::Learn;
+                } else {
+                    notify::exit_app();
+                }
+            }
+        }
+        // never keep the microphone open when the app goes to the background
+        if matches!(self.rec, RecUi::Recording(_)) && !ui.ctx().input(|i| i.focused) {
+            notify::rec_clear();
+            self.rec = RecUi::Idle;
+            self.rec_key = usize::MAX;
         }
         // the learner's own recording is thrown away as soon as the lesson is left
         if self.run.is_none() && self.rec != RecUi::Idle {
@@ -1327,10 +1353,16 @@ impl App {
                 soft_shadow(p, banner, CornerRadius::same(22), 1.2);
                 p.rect_filled(banner, CornerRadius::same(22), bc);
                 p.rect_filled(Rect::from_min_max(banner.min, Pos2::new(banner.max.x, banner.min.y + banner.height() * 0.5)), CornerRadius { nw: 22, ne: 22, sw: 0, se: 0 }, Color32::from_white_alpha(14));
-                paint_diamond_row(p, banner.left_bottom() + vec2(30.0, -9.0), (col_w / 22.0) as usize - 2, 22.0, 4.5, Color32::from_white_alpha(38));
-                p.text(banner.left_top() + vec2(22.0, 18.0), Align2::LEFT_TOP, format!("단원 {} · {}", u + 1, crate::data::level_name(u)), bold(14.0), Color32::from_white_alpha(225));
-                p.text(banner.left_top() + vec2(22.0, 38.0), Align2::LEFT_TOP, unit.title, bold(23.0), WHITE);
-                p.text(banner.right_center() + vec2(-22.0, 0.0), Align2::RIGHT_CENTER, unit.desc, font(14.0), Color32::from_white_alpha(235));
+                if col_w >= 420.0 {
+                    paint_diamond_row(p, banner.left_bottom() + vec2(30.0, -9.0), (col_w / 22.0) as usize - 2, 22.0, 4.5, Color32::from_white_alpha(38));
+                }
+                p.text(banner.left_top() + vec2(22.0, if col_w < 420.0 { 10.0 } else { 18.0 }), Align2::LEFT_TOP, format!("단원 {} · {}", u + 1, crate::data::level_name(u)), bold(14.0), Color32::from_white_alpha(225));
+                p.text(banner.left_top() + vec2(22.0, if col_w < 420.0 { 32.0 } else { 38.0 }), Align2::LEFT_TOP, unit.title, bold(if col_w < 420.0 { 21.0 } else { 23.0 }), WHITE);
+                if col_w < 420.0 {
+                    p.text(banner.left_top() + vec2(22.0, 62.0), Align2::LEFT_TOP, unit.desc, font(12.5), Color32::from_white_alpha(235));
+                } else {
+                    p.text(banner.right_center() + vec2(-22.0, 0.0), Align2::RIGHT_CENTER, unit.desc, font(14.0), Color32::from_white_alpha(235));
+                }
                 let doneu = self.p.done[u] as usize;
                 p.text(
                     banner.right_top() + vec2(-22.0, 16.0),
@@ -2132,7 +2164,7 @@ impl App {
                                         let r = Rect::from_min_max(Pos2::new(bx, y + 9.0 - bh), Pos2::new(bx + 6.0, y + 9.0));
                                         p.rect_filled(r, CornerRadius::same(2), if b < bars { GOLD } else { locked() });
                                     }
-                                    let sp = Rect::from_center_size(Pos2::new(rect.right() - 28.0, y), vec2(34.0, 34.0));
+                                    let sp = Rect::from_center_size(Pos2::new(rect.right() - 28.0, y), vec2(44.0, 44.0));
                                     let resp = ui.interact(sp, ui.scope_id().with(("w", u, i)), Sense::click());
                                     let p = ui.painter();
                                     if resp.hovered() {
@@ -2639,15 +2671,18 @@ impl App {
                     ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(2.0, border()));
                 }
                 let w = 900.0f32.min(full.width() - 60.0);
+                // two buttons side by side must fit even on a 320 dp wide phone
+                let btn_r = ((w - 12.0) * 0.55).min(190.0);
+                let btn_l = ((w - 12.0) * 0.45).min(150.0);
                 let row = Rect::from_center_size(full.center(), vec2(w, if narrow_fb { 160.0 } else { 60.0 }));
                 ui.scope_builder(egui::UiBuilder::new().max_rect(row), |ui| {
                     ui.horizontal_centered(|ui| match fb {
                         None if flash == Some(true) => {
-                            if outline_button(ui, "다시 듣기", vec2(150.0, 52.0), BLUE).clicked() {
+                            if outline_button(ui, "다시 듣기", vec2(btn_l, 52.0), BLUE).clicked() {
                                 do_replay = true;
                             }
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if button3d(ui, "따라 했어요", vec2(190.0, 52.0), PRIMARY, true).clicked() {
+                                if button3d(ui, "따라 했어요", vec2(btn_r, 52.0), PRIMARY, true).clicked() {
                                     do_check = true;
                                 }
                             });
@@ -2660,11 +2695,11 @@ impl App {
                                     }
                                 });
                             } else {
-                                if outline_button(ui, "아직 어려워요", vec2(170.0, 52.0), RED).clicked() {
+                                if outline_button(ui, "아직 어려워요", vec2(btn_r, 52.0), RED).clicked() {
                                     do_skip = true;
                                 }
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if button3d(ui, "알아요", vec2(170.0, 52.0), PRIMARY, true).clicked() {
+                                    if button3d(ui, "알아요", vec2(btn_r, 52.0), PRIMARY, true).clicked() {
                                         do_check = true;
                                     }
                                 });
@@ -2672,12 +2707,12 @@ impl App {
                         }
                         None => {
                             if !is_match {
-                                if outline_button(ui, "건너뛰기", vec2(150.0, 52.0), muted()).clicked() {
+                                if outline_button(ui, "건너뛰기", vec2(btn_l, 52.0), muted()).clicked() {
                                     do_skip = true;
                                 }
                             }
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if !is_match && button3d(ui, "확인", vec2(170.0, 52.0), PRIMARY, can_check).clicked() {
+                                if !is_match && button3d(ui, "확인", vec2(btn_r, 52.0), PRIMARY, can_check).clicked() {
                                     do_check = true;
                                 }
                             });
@@ -2741,7 +2776,7 @@ impl App {
                                     }
                                 });
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if button3d(ui, "계속", vec2(170.0, 52.0), c, true).clicked() {
+                                    if button3d(ui, "계속", vec2(btn_r, 52.0), c, true).clicked() {
                                         do_continue = true;
                                     }
                                 });
@@ -2941,6 +2976,12 @@ impl App {
             }
             ui.add_space(20.0);
         } else if let Some(pr) = &ex.prompt_thai {
+            // a Thai word must never be split in the middle: shrink the font until it fits the bubble
+            let budget = (ui.available_width() - 215.0).max(80.0);
+            let mut th_size = 30.0f32;
+            while th_size > 16.0 && text_size(ui, &pr.th, bold(th_size)).x > budget {
+                th_size -= 1.0;
+            }
             ui.horizontal(|ui| {
                 // mascot with speech bubble
                 let (mr, _) = ui.allocate_exact_size(vec2(110.0, 120.0), Sense::hover());
@@ -2959,7 +3000,7 @@ impl App {
                         }
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(&pr.th).font(bold(30.0)).color(fg()));
+                            ui.label(RichText::new(&pr.th).font(bold(th_size)).color(fg()));
                             ui.label(RichText::new(&pr.pron).font(font(15.0)).color(muted()));
                             if !pr.tones.is_empty() {
                                 ui.label(RichText::new(format!("성조  {}", pr.tones)).font(bold(15.0)).color(TONE))
