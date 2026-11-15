@@ -571,7 +571,7 @@ impl App {
     fn finish(&mut self, run: Run, now: f64) {
         let t = today();
         let (xp, practice, review) = match run.kind {
-            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters => (5 + run.first_right.min(5) as u32, true, false),
+            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling => (5 + run.first_right.min(5) as u32, true, false),
             LessonKind::Normal { lesson, .. } => {
                 let base = if lesson == LESSONS_PER_UNIT - 1 { 20 } else { 10 };
                 (base + if run.mistakes == 0 { 5 } else { 0 }, false, lesson == LESSONS_PER_UNIT - 1)
@@ -787,7 +787,7 @@ impl App {
             .show(ui, |ui| {
                 let full = ui.max_rect();
                 ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(2.0, border()));
-                let tabs = [(Tab::Learn, "학습"), (Tab::Letters, "문자"), (Tab::Words, "단어장"), (Tab::Notebook, "오답"), (Tab::Profile, "내 정보")];
+                let tabs = [(Tab::Learn, "학습"), (Tab::Letters, "알파벳"), (Tab::Words, "단어장"), (Tab::Notebook, "오답"), (Tab::Profile, "내 정보")];
                 let w = full.width() / tabs.len() as f32;
                 for (k, (tab, label)) in tabs.iter().enumerate() {
                     let r = Rect::from_min_size(Pos2::new(full.left() + w * k as f32, full.top() + 2.0), vec2(w, full.height() - 2.0));
@@ -946,7 +946,7 @@ impl App {
         p.text(Pos2::new(rect.left() + 62.0, rect.center().y - 12.0), Align2::LEFT_CENTER, "사왓디", bold(27.0), PRIMARY);
         p.text(Pos2::new(rect.left() + 63.0, rect.center().y + 15.0), Align2::LEFT_CENTER, "한국인을 위한 태국어", font(12.5), muted());
         ui.add_space(18.0);
-        let items = [(Tab::Learn, "학습"), (Tab::Letters, "태국 문자"), (Tab::Words, "단어장"), (Tab::Notebook, "오답 노트"), (Tab::Profile, "프로필")];
+        let items = [(Tab::Learn, "학습"), (Tab::Letters, "알파벳 학습"), (Tab::Words, "단어장"), (Tab::Notebook, "오답 노트"), (Tab::Profile, "프로필")];
         for (tab, label) in items {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
             let sel = self.tab == tab;
@@ -1375,7 +1375,24 @@ impl App {
                 ui.add_space(pad);
                 ui.vertical(|ui| {
                     ui.set_width(col_w);
-                    Self::page_header(ui, "태국 문자", "글자를 눌러 소리를 들어 보세요. 자음은 성조 규칙에 따라 세 무리로 나뉘어요.");
+                    Self::page_header(ui, "알파벳 학습", "태국 글자를 눌러 소리를 들어 보고, 아래 퀴즈로 연습해 보세요.");
+                    ui.label(RichText::new("퀴즈").font(bold(19.0)));
+                    ui.add_space(6.0);
+                    let now = ui.input(|i| i.time);
+                    for (label, kind) in [
+                        ("자음 이름 읽기 (10문제)", LessonKind::Letters),
+                        ("모음 소리 맞추기 (10문제)", LessonKind::Vowels),
+                        ("단어 글자 맞추기 (10문제)", LessonKind::Spelling),
+                    ] {
+                        if button3d(ui, label, vec2(col_w.min(420.0), 50.0), ORANGE, true).clicked() {
+                            self.start(kind, now);
+                        }
+                        ui.add_space(8.0);
+                    }
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("글자표").font(bold(19.0)));
+                    ui.label(RichText::new("글자를 눌러 소리를 들어 보세요. 자음은 성조 규칙에 따라 세 무리로 나뉘어요.").font(font(14.0)).color(muted()));
+                    ui.add_space(8.0);
                     // segmented control
                     ui.horizontal(|ui| {
                         for (v, label) in [(0u8, "자음 (기본 28자)"), (1, "모음"), (2, "성조 5개")] {
@@ -1392,11 +1409,6 @@ impl App {
                     });
                     ui.add_space(12.0);
                     if self.letters_page == 0 {
-                        if button3d(ui, "글자 읽기 연습하기 (10문제)", vec2(col_w.min(420.0), 50.0), ORANGE, true).clicked() {
-                            let now = ui.input(|i| i.time);
-                            self.start(LessonKind::Letters, now);
-                        }
-                        ui.add_space(10.0);
                         let classes = [(PRIMARY, "중자음"), (ORANGE, "고자음"), (BLUE, "저자음")];
                         ui.horizontal(|ui| {
                             for (c, label) in classes {
@@ -2076,7 +2088,8 @@ impl App {
                 let (label, c) = match run.kind {
                     LessonKind::Practice => ("복습".to_string(), BLUE),
                     LessonKind::Mistakes => ("오답".to_string(), RED),
-                    LessonKind::Letters => ("글자".to_string(), ORANGE),
+                    LessonKind::Letters | LessonKind::Spelling => ("글자".to_string(), ORANGE),
+                    LessonKind::Vowels => ("모음".to_string(), ORANGE),
                     _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
                 };
                 paint_note(p, hc, 26.0, c);

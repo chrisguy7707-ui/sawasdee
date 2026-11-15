@@ -31,7 +31,7 @@ pub fn desktop_main() -> eframe::Result {
         return Ok(());
     }
     if args.iter().any(|a| a == "--selftest") {
-        match lesson::selftest() {
+        match lesson::selftest(!args.iter().any(|a| a == "--no-audio")) {
             Ok(msg) => {
                 println!("selftest ok: {msg}");
                 return Ok(());

@@ -210,8 +210,12 @@ pub enum LessonKind {
     Practice,
     /// Review of questions answered wrongly before (the mistake notebook).
     Mistakes,
-    /// Reading drill for the Thai consonants.
+    /// Alphabet tab: reading drill for the Thai consonant names.
     Letters,
+    /// Alphabet tab: which sound does this vowel make.
+    Vowels,
+    /// Alphabet tab: build a word letter by letter (words the learner already met).
+    Spelling,
 }
 
 /// What the generator needs to know about the learner.
@@ -593,19 +597,19 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                 0 => (
                     (0..5.min(nw)).collect(),
                     vec![0, 1.min(ns - 1)],
-                    vec![Flash, Flash, Flash, Flash, Flash, Meaning, Meaning, Thai, Listen, Tone, Spell, Match, Fill, Build],
+                    vec![Flash, Flash, Flash, Flash, Flash, Meaning, Meaning, Thai, Listen, Tone, Thai, Match, Fill, Build],
                 ),
                 1 => (
                     (5.min(nw)..nw).collect(),
                     vec![1.min(ns - 1), 2.min(ns - 1)],
-                    vec![Flash, Flash, Flash, Flash, Flash, Meaning, Thai, Listen, Tone, Spell, Match, Fill, Build, Shadow, ToKorean],
+                    vec![Flash, Flash, Flash, Flash, Flash, Meaning, Thai, Listen, Tone, Meaning, Match, Fill, Build, Shadow, ToKorean],
                 ),
-                2 => ((0..nw).collect(), (0..ns.min(4)).collect(), vec![Thai, Listen, Spell, Build, Tone, Fill, ToKorean, Shadow, Match, Spell]),
-                3 => ((0..nw).collect(), (0..ns).collect(), vec![Build, Shadow, ToKorean, Fill, Listen, Spell, Build, Match, Fill, Thai, Shadow]),
+                2 => ((0..nw).collect(), (0..ns.min(4)).collect(), vec![Thai, Listen, Meaning, Build, Tone, Fill, ToKorean, Shadow, Match, Listen]),
+                3 => ((0..nw).collect(), (0..ns).collect(), vec![Build, Shadow, ToKorean, Fill, Listen, Meaning, Build, Match, Fill, Thai, Shadow]),
                 _ => (
                     (0..nw).collect(),
                     (0..ns).collect(),
-                    vec![Meaning, Fill, Listen, ToKorean, Tone, Spell, Match, Build, Shadow, Listen, ToKorean, Tone, Fill, Build, Spell],
+                    vec![Meaning, Fill, Listen, ToKorean, Tone, Thai, Match, Build, Shadow, Listen, ToKorean, Tone, Fill, Build, Meaning],
                 ),
             };
             let pool: Vec<(usize, usize)> = words.iter().map(|&i| (unit, i)).collect();
@@ -673,6 +677,61 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                 });
             }
         }
+        LessonKind::Vowels => {
+            let n = crate::data::VOWELS.len();
+            let mut idx: Vec<usize> = (0..n).collect();
+            rng.shuffle(&mut idx);
+            for &i in idx.iter().take(10) {
+                let v = &crate::data::VOWELS[i];
+                let mut others: Vec<usize> = (0..n).filter(|&j| j != i && crate::data::VOWELS[j].sound != v.sound).collect();
+                rng.shuffle(&mut others);
+                let mut opts: Vec<usize> = vec![i];
+                opts.extend(others.into_iter().take(3));
+                rng.shuffle(&mut opts);
+                let correct = opts.iter().position(|&j| j == i).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "모음",
+                    title: "이 모음은 어떤 소리일까요?".into(),
+                    prompt_thai: Some(Prompt { th: v.form.to_string(), pron: String::new(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: Some(v.example.to_string()),
+                    listen_only: false,
+                    body: Body::Choice {
+                        options: opts.iter().map(|&j| Card::ko(crate::data::VOWELS[j].sound)).collect(),
+                        correct,
+                    },
+                    solution: format!("{} = {} · 예: {} ({})", v.form, v.sound, v.example, v.example_pron),
+                    solution_speak: Some(v.example.to_string()),
+                    words: vec![],
+                    sentence: None,
+                });
+            }
+        }
+        LessonKind::Spelling => {
+            // Words the learner has met (weakest first); at the start, words of the first units.
+            let mut pool: Vec<(usize, usize)> = ctx.focus.to_vec();
+            if pool.len() < 10 {
+                for u in 0..UNITS.len().min(3) {
+                    for i in 0..UNITS[u].words.len() {
+                        if !pool.contains(&(u, i)) {
+                            pool.push((u, i));
+                        }
+                    }
+                }
+            }
+            // Only words that split into 2 to 7 letter groups make a good puzzle.
+            pool.retain(|&(u, i)| (2..=7).contains(&clusters(UNITS[u].words[i].th).len()));
+            let mut uniq: Vec<(usize, usize)> = Vec::new();
+            for &(u, i) in &pool {
+                if !uniq.iter().any(|&(a, b)| UNITS[a].words[b].th == UNITS[u].words[i].th) {
+                    uniq.push((u, i));
+                }
+            }
+            rng.shuffle(&mut uniq);
+            for &(u, i) in uniq.iter().take(10) {
+                out.push(make(rng, Kind::Spell, u, i, 0, &[], ctx));
+            }
+        }
         LessonKind::Mistakes => {
             let cycle = [Kind::Thai, Kind::Meaning, Kind::Listen, Kind::Tone];
             let (mut wc, mut sc) = (0usize, 0usize);
@@ -719,7 +778,7 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
 }
 
 /// Checks that every lesson can be answered. Used by `--selftest`.
-pub fn selftest() -> Result<String, String> {
+pub fn selftest(check_audio: bool) -> Result<String, String> {
     let mut n = 0;
     for (u, unit) in UNITS.iter().enumerate() {
         for w in unit.words {
@@ -759,9 +818,17 @@ pub fn selftest() -> Result<String, String> {
             check_ex(&ex, seed % 2 == 0)?;
             n += 1;
         }
-        for e in build(LessonKind::Letters, &mut rng, &Ctx { tts: true, female: false, focus: &[], mistakes: &[] }) {
-            check_ex(&e, false)?;
-            n += 1;
+        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling] {
+            for focus_set in [&[][..], &focus[..]] {
+                let es = build(kind, &mut rng, &Ctx { tts: true, female: false, focus: focus_set, mistakes: &[] });
+                if es.len() < 8 {
+                    return Err(format!("{kind:?} lesson too short: {}", es.len()));
+                }
+                for e in es {
+                    check_ex(&e, false)?;
+                    n += 1;
+                }
+            }
         }
         let mistakes: Vec<(usize, usize, bool)> = vec![(0, 2, false), (3, 1, true), (6, 4, true), (11, 9, false), (9, 3, true), (1, 0, false)];
         let ex = build(LessonKind::Mistakes, &mut rng, &Ctx { tts: seed % 3 == 0, female: seed % 2 == 0, focus: &[], mistakes: &mistakes });
@@ -773,12 +840,20 @@ pub fn selftest() -> Result<String, String> {
             n += 1;
         }
     }
+    let mut missing = 0usize;
+    let mut first_missing = String::new();
     for t in all_speech() {
         if !crate::audio::clip_decodes(&t) {
-            return Err(format!("no playable recording for {t}"));
+            missing += 1;
+            if first_missing.is_empty() {
+                first_missing = t;
+            }
         }
     }
-    Ok(format!("{n} exercises checked, {} recordings present", all_speech().len()))
+    if check_audio && missing > 0 {
+        return Err(format!("no playable recording for {missing} phrases, e.g. {first_missing} (run tools/make_audio_google.py)"));
+    }
+    Ok(format!("{n} exercises checked, {} recordings present, {missing} missing", all_speech().len() - missing))
 }
 
 fn check_ex(ex: &Exercise, female: bool) -> Result<(), String> {
