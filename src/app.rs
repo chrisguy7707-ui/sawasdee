@@ -1577,6 +1577,53 @@ impl App {
         });
     }
 
+    /// Profile "정보" sections: learning summary, notice about AI voice and checking, licenses.
+    fn about_sections(&mut self, ui: &mut Ui, col_w: f32) {
+        ui.label(RichText::new("정보").font(bold(21.0)));
+        ui.add_space(4.0);
+        egui::CollapsingHeader::new(RichText::new("학습 요약").font(bold(17.0))).show(ui, |ui| {
+            let p = &self.p;
+            let finished = p.done.iter().filter(|&&d| d as usize >= LESSONS_PER_UNIT).count();
+            let tried = p.stats.len();
+            let strong = p.stats.values().filter(|w| w.level >= 4).count();
+            let (right, wrong) = p.stats.values().fold((0u32, 0u32), |a, w| (a.0 + w.right, a.1 + w.wrong));
+            let acc = if right + wrong > 0 { right * 100 / (right + wrong) } else { 0 };
+            let t = today();
+            let week: u32 = (0..7).map(|k| p.xp_by_day.get(&(t - k)).copied().unwrap_or(0)).sum();
+            let lines = [
+                format!("끝낸 단원  {} / {}", finished, UNITS.len()),
+                format!("끝낸 레슨  {}  (만점 {})", p.lessons_done, p.perfect_lessons),
+                format!("만난 단어  {}  (익힘 {})", tried, strong),
+                format!("정답률  {}%  (맞음 {} · 틀림 {})", acc, right, wrong),
+                format!("오답 노트  {}개", p.notebook.len()),
+                format!("연속 학습  {}일  (최고 {}일)", p.streak, p.best_streak),
+                format!("경험치  합계 {}  (최근 7일 {})", p.xp_total, week),
+                format!("앱 버전 {} · {}", APP_VERSION, std::env::consts::OS),
+            ];
+            for l in lines {
+                ui.label(RichText::new(l).font(font(15.0)));
+            }
+            ui.add_space(4.0);
+            ui.label(RichText::new("시험 사용에 참여 중이라면 이 화면을 캡처해서 보내 주세요. 이 정보는 기기 밖으로 자동 전송되지 않아요.").font(font(13.0)).color(muted()));
+        });
+        egui::CollapsingHeader::new(RichText::new("음성과 내용 안내").font(bold(17.0))).show(ui, |ui| {
+            ui.set_width(col_w - 40.0);
+            for l in [
+                "태국어 음성은 AI 음성 합성(Google Cloud Chirp 3 HD)으로 만들었어요. 사람이 녹음한 것이 아니라서 발음이나 성조가 어색한 곳이 있을 수 있어요.",
+                "단어, 문장, 한글 발음, 성조 표시는 AI의 도움으로 만들었고 태국어 원어민의 검수가 아직 끝나지 않았어요. 틀린 곳을 발견하면 알려 주세요.",
+                "한글 발음은 근사치예요. 한글로는 태국어의 성조와 길이를 모두 나타낼 수 없어요.",
+                "이 앱은 카메라, 마이크, 위치 같은 권한을 쓰지 않고, 학습 기록은 이 기기 안에만 저장돼요.",
+            ] {
+                ui.label(RichText::new(l).font(font(14.0)));
+                ui.add_space(4.0);
+            }
+        });
+        egui::CollapsingHeader::new(RichText::new("오픈소스 라이선스").font(bold(17.0))).show(ui, |ui| {
+            ui.set_width(col_w - 40.0);
+            ui.label(RichText::new(include_str!("../assets/legal/licenses.txt")).font(font(12.0)).color(muted()));
+        });
+    }
+
     /// "특수 표기" page: letter clusters, leading ห and อ, silent letters, the repeat sign.
     fn specials_page(&mut self, ui: &mut Ui, col_w: f32) {
         ui.label(RichText::new("글자를 읽다 보면 규칙대로 읽히지 않는 모양이 나와요. 다섯 가지만 알면 대부분 읽을 수 있어요.").font(font(15.0)).color(muted()));
@@ -2112,6 +2159,8 @@ impl App {
                             }
                         });
                     }
+                    ui.add_space(14.0);
+                    self.about_sections(ui, col_w);
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("앱").font(bold(21.0)));

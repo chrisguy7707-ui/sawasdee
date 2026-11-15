@@ -64,4 +64,4 @@
 2. 문장의 모든 단어는 단어 목록 또는 `EXTRA_TOKENS`에 있어야 한다(없으면 발음이 비어 검사에서 실패).
 3. 남성형(ครับ/ผม)으로 쓰면 여성 학습자에게 자동으로 ค่ะ/ฉัน으로 바뀐다.
 4. 새 문구를 넣으면 음성이 필요하다: `python3 tools/make_audio_google.py` (기존 음성은 재사용).
-5. `./target/debug/sawasdee --selftest`로 검사하고, 원어민 검수를 거친 뒤에만 공개한다.
+5. `./target/debug/sawasdee --selftest`로 검사하고, `python3 tools/check_tones.py`로 한 음절 단어의 성조 코드와 한글 발음의 첫소리를 규칙으로 검증한다(v0.3.0 기준 한 음절 199개 모두 일치, 두 음절 이상 단어는 검증 대상 아님). 원어민 검수를 거친 뒤에만 공개한다.
