@@ -244,3 +244,9 @@ void sawasdee_rec_clear(void) {
     gHasRecording = NO;
     [[NSFileManager defaultManager] removeItemAtURL:sawasdee_rec_url() error:nil];
 }
+
+// ---- Text size setting (Dynamic Type) as a factor, so the app can scale its drawing ----
+float sawasdee_font_scale(void) {
+    CGFloat s = [[UIFontMetrics defaultMetrics] scaledValueForValue:100.0] / 100.0;
+    return (float)s;
+}

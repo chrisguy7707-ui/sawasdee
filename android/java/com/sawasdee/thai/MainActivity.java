@@ -38,6 +38,15 @@ public class MainActivity extends NativeActivity {
         return super.onKeyDown(keyCode, event);
     }
 
+    /** The system "Font size" setting as a factor (1.0 = normal). */
+    public static float fontScale(Activity a) {
+        try {
+            return a.getResources().getConfiguration().fontScale;
+        } catch (Exception e) {
+            return 1.0f;
+        }
+    }
+
     /** True once per Back press. */
     public static boolean consumeBack() {
         boolean b = back;

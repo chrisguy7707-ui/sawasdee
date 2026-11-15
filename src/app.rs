@@ -369,6 +369,8 @@ pub struct App {
     rec: RecUi,
     rec_key: usize,
     back_polled: f64,
+    scale_polled: f64,
+    zoom: f32,
     /// Pitch shapes (semitones, 60 points) of the native clip and of the learner's recording.
     rec_native: Vec<f32>,
     rec_mine: Vec<f32>,
@@ -468,6 +470,8 @@ impl App {
             rec: RecUi::Idle,
             rec_key: usize::MAX,
             back_polled: 0.0,
+            scale_polled: -10.0,
+            zoom: -1.0, // unknown yet: the first check sets it (a zoom saved by an older session is not trusted)
             rec_native: Vec::new(),
             rec_mine: Vec::new(),
             backup_pending: None,
@@ -743,6 +747,21 @@ impl eframe::App for App {
             let band = if self.splash { Color32::from_rgb(38, 34, 112) } else { bg() };
             egui::Panel::top("ios_top").exact_size(top).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
             egui::Panel::bottom("ios_bottom").exact_size(bottom).show_separator_line(false).frame(egui::Frame::NONE.fill(bg())).show(ui, |_| {});
+        }
+        // follow the phone's text size setting by enlarging the whole picture (capped, so layouts still fit)
+        {
+            let t = ui.input(|i| i.time);
+            if t - self.scale_polled > 1.5 {
+                self.scale_polled = t;
+                // never make the picture so large that the screen is narrower than ~335 dp (the card layouts stay clean down to there)
+                let width_now = ui.ctx().content_rect().width() * ui.ctx().zoom_factor();
+                let cap = (width_now / 335.0).clamp(1.0, 1.3);
+                let want = notify::font_scale().clamp(1.0, cap);
+                if (want - self.zoom).abs() > 0.01 && self.shot.is_none() {
+                    self.zoom = want;
+                    ui.ctx().set_zoom_factor(want);
+                }
+            }
         }
         // the Back button / gesture (Android): step back one level, and exit from the first screen
         let t_now = ui.input(|i| i.time);

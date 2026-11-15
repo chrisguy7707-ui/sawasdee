@@ -94,6 +94,11 @@ pub fn rec_path() -> Option<String> {
     imp::rec_path()
 }
 
+/// The phone's text size setting as a factor (1.0 = normal; computers: 1.0).
+pub fn font_scale() -> f32 {
+    imp::font_scale().clamp(1.0, 2.0)
+}
+
 /// True once each time the Back button/gesture was used (Android only).
 pub fn back_pressed() -> bool {
     imp::back_pressed()
@@ -123,6 +128,7 @@ mod imp {
         fn sawasdee_rec_has() -> i32;
         fn sawasdee_rec_clear();
         fn sawasdee_rec_path() -> *mut c_char;
+        fn sawasdee_font_scale() -> f32;
     }
 
     pub fn rec_path() -> Option<String> {
@@ -138,6 +144,10 @@ mod imp {
         }
     }
 
+    pub fn font_scale() -> f32 {
+        // SAFETY: plain function from main.m.
+        unsafe { sawasdee_font_scale() }
+    }
     pub fn back_pressed() -> bool {
         false
     }
@@ -243,6 +253,9 @@ mod imp {
         result.ok()
     }
 
+    pub fn font_scale() -> f32 {
+        with_class("com.sawasdee.thai.MainActivity", |env, act, cls| Ok(env.call_static_method(cls, "fontScale", "(Landroid/app/Activity;)F", &[JValue::Object(act)])?.f()?)).unwrap_or(1.0)
+    }
     pub fn back_pressed() -> bool {
         with_class("com.sawasdee.thai.MainActivity", |env, _act, cls| Ok(env.call_static_method(cls, "consumeBack", "()Z", &[])?.z()?)).unwrap_or(false)
     }
@@ -352,6 +365,9 @@ pub use imp::init as init_android;
 // ---------------------------------------------------------------------- computers
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod imp {
+    pub fn font_scale() -> f32 {
+        1.0
+    }
     pub fn back_pressed() -> bool {
         false
     }
