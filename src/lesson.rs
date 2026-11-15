@@ -611,7 +611,38 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
             let nw = u.words.len();
             let ns = u.sentences.len();
             use Kind::*;
-            let (words, sents, plan): (Vec<usize>, Vec<usize>, Vec<Kind>) = match lesson {
+            let last = ns - 1;
+            let (words, sents, plan): (Vec<usize>, Vec<usize>, Vec<Kind>) = if nw > 10 {
+                // Units with 15 words: three lessons of five new words, then a mixed review and the unit review.
+                match lesson {
+                    0 => (
+                        (0..5).collect(),
+                        vec![0, 1.min(last)],
+                        vec![Flash, Flash, Flash, Flash, Flash, Meaning, Meaning, Thai, Listen, Tone, Thai, Match, Fill, Build],
+                    ),
+                    1 => (
+                        (5..10).collect(),
+                        vec![1.min(last), 2.min(last)],
+                        vec![Flash, Flash, Flash, Flash, Flash, Meaning, Thai, Listen, Tone, Meaning, Match, Fill, Build, Shadow, ToKorean],
+                    ),
+                    2 => (
+                        (10..nw).collect(),
+                        vec![3.min(last), 4.min(last), 5.min(last)],
+                        vec![Flash, Flash, Flash, Flash, Flash, Meaning, Thai, Listen, Tone, Meaning, Match, Fill, Build, Shadow, ToKorean],
+                    ),
+                    3 => (
+                        (0..nw).collect(),
+                        (0..ns).collect(),
+                        vec![Thai, Listen, Meaning, Build, Tone, Fill, ToKorean, Shadow, Match, Listen, Build, Meaning, Fill, Shadow],
+                    ),
+                    _ => (
+                        (0..nw).collect(),
+                        (0..ns).collect(),
+                        vec![Meaning, Fill, Listen, ToKorean, Tone, Thai, Match, Build, Shadow, Listen, ToKorean, Tone, Fill, Build, Meaning, Thai, Match],
+                    ),
+                }
+            } else {
+                match lesson {
                 0 => (
                     (0..5.min(nw)).collect(),
                     vec![0, 1.min(ns - 1)],
@@ -629,6 +660,7 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                     (0..ns).collect(),
                     vec![Meaning, Fill, Listen, ToKorean, Tone, Thai, Match, Build, Shadow, Listen, ToKorean, Tone, Fill, Build, Meaning],
                 ),
+                }
             };
             let pool: Vec<(usize, usize)> = words.iter().map(|&i| (unit, i)).collect();
             // Tone questions use one-syllable words from this lesson (or the unit).
