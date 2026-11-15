@@ -188,12 +188,14 @@ fn paint_card_frame(p: &Painter, rect: Rect, look: Look, hovered: bool, radius: 
 pub fn choice_card(ui: &mut Ui, number: usize, card: &Card, size: Vec2, look: Look, interactive: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, if interactive { Sense::click() } else { Sense::hover() });
     let p = ui.painter();
-    paint_card_frame(p, rect, look, resp.hovered() && interactive, 14);
+    paint_card_frame(p, rect, look, resp.hovered() && interactive, 20);
     let (_, border, text_c) = look_colors(look);
     let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
     // number badge
     let badge = Rect::from_center_size(Pos2::new(face.left() + 26.0, face.center().y), vec2(26.0, 26.0));
-    p.rect_stroke(badge, CornerRadius::same(7), Stroke::new(2.0, if look == Look::Normal { self::border() } else { border }), StrokeKind::Inside);
+    let mut outline = diamond_points(badge.center(), 15.0, 1.4);
+    outline.push(outline[0]);
+    p.add(egui::Shape::line(outline, Stroke::new(2.0, if look == Look::Normal { self::border() } else { border })));
     p.text(badge.center(), Align2::CENTER_CENTER, number.to_string(), bold(13.0), if look == Look::Normal { muted() } else { text_c });
     let compact = size.x < 220.0;
     let x = face.left() + if compact { 46.0 } else { 52.0 };
@@ -254,7 +256,7 @@ pub fn tile(ui: &mut Ui, card: &Card, look: Look) -> Response {
     let interactive = matches!(look, Look::Normal | Look::Selected);
     let (rect, resp) = ui.allocate_exact_size(size, if interactive { Sense::click() } else { Sense::hover() });
     let p = ui.painter();
-    paint_card_frame(p, rect, look, resp.hovered() && interactive, 12);
+    paint_card_frame(p, rect, look, resp.hovered() && interactive, 16);
     if look != Look::Ghost {
         let (_, _, text_c) = look_colors(look);
         let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
@@ -280,10 +282,9 @@ pub fn progress_bar(p: &Painter, rect: Rect, frac: f32, color: Color32) {
         let w = (rect.width() * frac).max(rect.height());
         let fill = Rect::from_min_size(rect.min, vec2(w, rect.height()));
         p.rect_filled(fill, r, color);
-        // shine
-        let shine = Rect::from_min_size(fill.min + vec2(8.0, rect.height() * 0.22), vec2((w - 16.0).max(0.0), rect.height() * 0.22));
-        if shine.width() > 4.0 {
-            p.rect_filled(shine, CornerRadius::same(3), lighten(color, 0.35));
+        // a small diamond at the end of the bar instead of a shine strip
+        if rect.height() >= 10.0 {
+            paint_diamond(p, Pos2::new(fill.right() - rect.height() * 0.5, rect.center().y), rect.height() * 0.3, Color32::from_white_alpha(170));
         }
     }
 }
