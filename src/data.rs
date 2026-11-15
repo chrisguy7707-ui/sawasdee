@@ -1026,6 +1026,80 @@ pub static CONSONANTS: &[Consonant] = &[
     c("ฮ", "ฮอ นกฮูก", "허 녹훅", "ㅎ (h)", 2, "부엉이"),
 ];
 
+/// The 16 remaining letters of the 44-letter alphabet (rarely used; two are no longer used at all).
+pub static CONSONANTS_MORE: &[Consonant] = &[
+    c("ฃ", "ฃอ ขวด", "커 쿠앗", "ㅋ (kh)", 1, "병 (지금은 안 써요)"),
+    c("ฅ", "ฅอ คน", "커 콘", "ㅋ (kh)", 2, "사람 (지금은 안 써요)"),
+    c("ฆ", "ฆอ ระฆัง", "커 라캉", "ㅋ (kh)", 2, "종"),
+    c("ฌ", "ฌอ เฌอ", "처 츠", "ㅊ (ch)", 2, "나무"),
+    c("ญ", "ญอ หญิง", "여 잉", "ㅇ (y)", 2, "여자"),
+    c("ฎ", "ฎอ ชฎา", "더 차다", "ㄷ (d)", 0, "관"),
+    c("ฏ", "ฏอ ปฏัก", "떠 빠딱", "ㄸ (t)", 0, "몰이 막대"),
+    c("ฐ", "ฐอ ฐาน", "터 탄", "ㅌ (th)", 1, "받침대"),
+    c("ฑ", "ฑอ มณโฑ", "터 몬토", "ㅌ (th)", 2, "몬토 (인물)"),
+    c("ฒ", "ฒอ ผู้เฒ่า", "터 푸타오", "ㅌ (th)", 2, "노인"),
+    c("ณ", "ณอ เณร", "너 넨", "ㄴ (n)", 2, "어린 스님"),
+    c("ธ", "ธอ ธง", "터 통", "ㅌ (th)", 2, "깃발"),
+    c("ภ", "ภอ สำเภา", "퍼 쌈파오", "ㅍ (ph)", 2, "돛단배"),
+    c("ศ", "ศอ ศาลา", "써 쌀라", "ㅆ (s)", 1, "정자"),
+    c("ษ", "ษอ ฤๅษี", "써 르씨", "ㅆ (s)", 1, "수행자"),
+    c("ฬ", "ฬอ จุฬา", "러 쭐라", "ㄹ (l)", 2, "연"),
+];
+
+/// Names of the three consonant classes (0 mid, 1 high, 2 low).
+pub fn class_name(class: u8) -> &'static str {
+    ["중자음", "고자음", "저자음"][class.min(2) as usize]
+}
+
+/// Letters of a class, for the rule page.
+pub fn class_letters(class: u8) -> String {
+    CONSONANTS.iter().chain(CONSONANTS_MORE.iter()).filter(|c| c.class == class).map(|c| c.letter).collect::<Vec<_>>().join(" ")
+}
+
+/// All 44 letters, basic ones first.
+pub fn all_consonants() -> impl Iterator<Item = &'static Consonant> {
+    CONSONANTS.iter().chain(CONSONANTS_MORE.iter())
+}
+
+/// The two letters that are no longer used in modern Thai.
+pub fn is_obsolete(letter: &str) -> bool {
+    letter == "ฃ" || letter == "ฅ"
+}
+
+/// How a consonant class, the syllable ending and the tone mark decide the tone.
+pub struct ToneRule {
+    /// 0 mid, 1 high, 2 low consonant class.
+    pub class: u8,
+    /// The condition, in Korean.
+    pub when: &'static str,
+    pub tone: char,
+    pub example: &'static str,
+    pub example_pron: &'static str,
+    pub example_ko: &'static str,
+}
+
+const fn tr(class: u8, when: &'static str, tone: char, example: &'static str, example_pron: &'static str, example_ko: &'static str) -> ToneRule {
+    ToneRule { class, when, tone, example, example_pron, example_ko }
+}
+
+pub static TONE_RULES: &[ToneRule] = &[
+    tr(0, "산 음절 · 성조 부호 없음", 'M', "กิน", "낀", "먹다"),
+    tr(0, "죽은 음절 · 성조 부호 없음", 'L', "ตก", "똑", "떨어지다"),
+    tr(0, "마이 엑 ( ่ )", 'L', "อ่าน", "안", "읽다"),
+    tr(0, "마이 토 ( ้ )", 'F', "ด้วย", "두어이", "~로, 함께"),
+    tr(0, "마이 뜨리 ( ๊ )", 'H', "โต๊ะ", "또", "탁자"),
+    tr(0, "마이 짜따와 ( ๋ )", 'R', "จ๋า", "짜", "(부르는 말) ~야"),
+    tr(1, "산 음절 · 성조 부호 없음", 'R', "สวย", "쑤어이", "예쁘다"),
+    tr(1, "죽은 음절 · 성조 부호 없음", 'L', "ผัก", "팍", "채소"),
+    tr(1, "마이 엑 ( ่ )", 'L', "ส่ง", "쏭", "보내다"),
+    tr(1, "마이 토 ( ้ )", 'F', "ห้อง", "헝", "방"),
+    tr(2, "산 음절 · 성조 부호 없음", 'M', "คน", "콘", "사람"),
+    tr(2, "죽은 음절 (짧은 모음)", 'H', "พัก", "팍", "쉬다"),
+    tr(2, "죽은 음절 (긴 모음)", 'F', "ลูก", "룩", "자녀, 열매"),
+    tr(2, "마이 엑 ( ่ )", 'F', "แม่", "매", "어머니"),
+    tr(2, "마이 토 ( ้ )", 'H', "น้ำ", "남", "물"),
+];
+
 pub struct Vowel {
     pub form: &'static str,
     pub sound: &'static str,
@@ -1038,14 +1112,27 @@ const fn v(form: &'static str, sound: &'static str, example: &'static str, examp
 }
 
 pub static VOWELS: &[Vowel] = &[
-    v("-า", "아 (길게)", "มา", "마"),
-    v("-ิ", "이 (짧게)", "กิน", "낀"),
-    v("-ี", "이 (길게)", "ดี", "디"),
-    v("-ุ", "우 (짧게)", "คุณ", "쿤"),
-    v("-ู", "우 (길게)", "หมู", "무"),
-    v("เ-", "에", "เท", "테"),
-    v("แ-", "애", "แม่", "매"),
-    v("โ-", "오", "โต", "또"),
-    v("ไ- / ใ-", "아이", "ไป", "빠이"),
-    v("เ-า", "아오", "เขา", "카오"),
+    v("กะ", "아 (짧게)", "จะ", "짜"),
+    v("กา", "아 (길게)", "มา", "마"),
+    v("กิ", "이 (짧게)", "กิน", "낀"),
+    v("กี", "이 (길게)", "ดี", "디"),
+    v("กึ", "으 (짧게)", "ถึง", "틍"),
+    v("กือ", "으 (길게)", "ชื่อ", "츠"),
+    v("กุ", "우 (짧게)", "คุณ", "쿤"),
+    v("กู", "우 (길게)", "หมู", "무"),
+    v("เกะ", "에 (짧게)", "เล็ก", "렉"),
+    v("เก", "에 (길게)", "เท", "테"),
+    v("แกะ", "애 (짧게)", "แพะ", "패"),
+    v("แก", "애 (길게)", "แม่", "매"),
+    v("โกะ", "오 (짧게)", "โต๊ะ", "또"),
+    v("โก", "오 (길게)", "โต", "또"),
+    v("เกาะ", "어 (짧게, 입을 크게)", "เกาะ", "꺼"),
+    v("กอ", "어 (길게, 입을 크게)", "พ่อ", "퍼"),
+    v("เกอ", "으어 (길게)", "เจอ", "쩌"),
+    v("เกีย", "이아", "เสีย", "씨아"),
+    v("เกือ", "으아", "เรือ", "르아"),
+    v("กัว", "우아", "ตัว", "뚜아"),
+    v("กำ", "암", "น้ำ", "남"),
+    v("ไก / ใก", "아이", "ไป", "빠이"),
+    v("เกา", "아오", "เขา", "카오"),
 ];

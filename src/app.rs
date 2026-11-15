@@ -13,7 +13,7 @@ use eframe::egui::{
 use serde::{Deserialize, Serialize};
 
 use crate::audio::Audio;
-use crate::data::{CONSONANTS, LESSONS_PER_UNIT, TONES, UNITS, VOWELS};
+use crate::data::{tone_of, CONSONANTS, LESSONS_PER_UNIT, TONES, TONE_RULES, UNITS, VOWELS};
 use crate::kit::*;
 use crate::lesson::{self, Body, Exercise, LessonKind, Rng};
 
@@ -464,7 +464,19 @@ impl App {
                 }
                 "tones" => {
                     app.tab = Tab::Letters;
+                    app.letters_page = 3;
+                }
+                "letters-more" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 1;
+                }
+                "vowels" => {
+                    app.tab = Tab::Letters;
                     app.letters_page = 2;
+                }
+                "tone-rules" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 4;
                 }
                 "words" => app.tab = Tab::Words,
                 "profile" => app.tab = Tab::Profile,
@@ -571,7 +583,7 @@ impl App {
     fn finish(&mut self, run: Run, now: f64) {
         let t = today();
         let (xp, practice, review) = match run.kind {
-            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling => (5 + run.first_right.min(5) as u32, true, false),
+            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules => (5 + run.first_right.min(5) as u32, true, false),
             LessonKind::Normal { lesson, .. } => {
                 let base = if lesson == LESSONS_PER_UNIT - 1 { 20 } else { 10 };
                 (base + if run.mistakes == 0 { 5 } else { 0 }, false, lesson == LESSONS_PER_UNIT - 1)
@@ -1383,6 +1395,8 @@ impl App {
                         ("자음 이름 읽기 (10문제)", LessonKind::Letters),
                         ("모음 소리 맞추기 (10문제)", LessonKind::Vowels),
                         ("단어 글자 맞추기 (10문제)", LessonKind::Spelling),
+                        ("자음 계급 맞추기 (10문제)", LessonKind::ConsonantClass),
+                        ("성조 규칙 맞추기 (10문제)", LessonKind::ToneRules),
                     ] {
                         if button3d(ui, label, vec2(col_w.min(420.0), 50.0), ORANGE, true).clicked() {
                             self.start(kind, now);
@@ -1393,14 +1407,15 @@ impl App {
                     ui.label(RichText::new("글자표").font(bold(19.0)));
                     ui.label(RichText::new("글자를 눌러 소리를 들어 보세요. 자음은 성조 규칙에 따라 세 무리로 나뉘어요.").font(font(14.0)).color(muted()));
                     ui.add_space(8.0);
-                    // segmented control
-                    ui.horizontal(|ui| {
-                        for (v, label) in [(0u8, "자음 (기본 28자)"), (1, "모음"), (2, "성조 5개")] {
+                    // pages: 0 basic consonants, 1 other consonants, 2 vowels, 3 the five tones, 4 tone rules
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                        for (v, label) in [(0u8, "자음 28자"), (1, "자음 16자"), (2, "모음 23개"), (3, "성조 5개"), (4, "성조 규칙")] {
                             let sel = self.letters_page == v;
                             let r = if sel {
-                                button3d(ui, label, vec2(170.0, 44.0), PRIMARY, true)
+                                button3d(ui, label, vec2(108.0, 44.0), PRIMARY, true)
                             } else {
-                                outline_button(ui, label, vec2(170.0, 44.0), muted())
+                                outline_button(ui, label, vec2(108.0, 44.0), muted())
                             };
                             if r.clicked() {
                                 self.letters_page = v;
@@ -1408,7 +1423,7 @@ impl App {
                         }
                     });
                     ui.add_space(12.0);
-                    if self.letters_page == 0 {
+                    if self.letters_page <= 1 {
                         let classes = [(PRIMARY, "중자음"), (ORANGE, "고자음"), (BLUE, "저자음")];
                         ui.horizontal(|ui| {
                             for (c, label) in classes {
@@ -1419,9 +1434,15 @@ impl App {
                             }
                         });
                         ui.add_space(8.0);
-                        let cell = vec2(128.0, 132.0);
-                        let per_row = ((col_w + 10.0) / (cell.x + 10.0)).floor().max(1.0) as usize;
-                        for row in CONSONANTS.chunks(per_row) {
+                        let per_row = ((col_w + 10.0) / (128.0 + 10.0)).floor().max(1.0) as usize;
+                        // widen the cells so a row fills the column
+                        let cell = vec2(((col_w - 10.0 * (per_row as f32 - 1.0)) / per_row as f32).floor().min(190.0), 132.0);
+                        let list: &[crate::data::Consonant] = if self.letters_page == 0 { CONSONANTS } else { crate::data::CONSONANTS_MORE };
+                        if self.letters_page == 1 {
+                            ui.label(RichText::new("자주 쓰지 않는 글자들이에요. ฃ ฅ 두 글자는 지금은 쓰지 않아요. 눌러서 이름을 들어 보세요.").font(font(14.0)).color(muted()));
+                            ui.add_space(6.0);
+                        }
+                        for row in list.chunks(per_row) {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 10.0;
                                 for cons in row {
@@ -1442,17 +1463,19 @@ impl App {
                             });
                             ui.add_space(4.0);
                         }
-                    } else if self.letters_page == 1 {
+                    } else if self.letters_page == 2 {
+                        ui.label(RichText::new("모음은 짧은 소리와 긴 소리가 따로 있어요. 짧고 긴 차이가 단어의 뜻과 성조를 바꿔요. 아래는 자음 ก 위에 모음을 얹은 모양이에요(ก 자리에는 어떤 자음이든 올 수 있어요).").font(font(14.0)).color(muted()));
+                        ui.add_space(8.0);
                         for v in VOWELS {
-                            card_frame().inner_margin(Margin::symmetric(18, 10)).show(ui, |ui| {
-                                ui.set_width(col_w - 40.0);
+                            card_frame().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
+                                ui.set_width(col_w - 32.0);
                                 ui.horizontal(|ui| {
-                                    let (r, _) = ui.allocate_exact_size(vec2(110.0, 50.0), Sense::hover());
-                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.form, bold(30.0), ORANGE);
-                                    let (r, _) = ui.allocate_exact_size(vec2(150.0, 50.0), Sense::hover());
-                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.sound, bold(16.0), fg());
-                                    let (r, _) = ui.allocate_exact_size(vec2(200.0, 50.0), Sense::hover());
-                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, format!("예: {}  ({})", v.example, v.example_pron), font(17.0), muted());
+                                    let (r, _) = ui.allocate_exact_size(vec2(92.0, 52.0), Sense::hover());
+                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.form, bold(26.0), ORANGE);
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(v.sound).font(bold(16.0)));
+                                        ui.label(RichText::new(format!("예: {}  ({})", v.example, v.example_pron)).font(font(15.0)).color(muted()));
+                                    });
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         if small_speaker(ui, BLUE).clicked() {
                                             self.audio.speak(v.example, true);
@@ -1462,7 +1485,7 @@ impl App {
                             });
                             ui.add_space(6.0);
                         }
-                    } else {
+                    } else if self.letters_page == 3 {
                         ui.label(RichText::new("태국어에는 성조가 5개 있어요. 한글로 똑같이 '마이'라고 써도, 성조가 다르면 전혀 다른 말이 돼요. 눌러서 들어 보세요.").font(font(15.0)).color(muted()));
                         ui.add_space(8.0);
                         for t in TONES {
@@ -1507,10 +1530,68 @@ impl App {
                                 .color(muted()),
                             );
                         });
+                    } else {
+                        self.tone_rules_page(ui, col_w);
                     }
                     ui.add_space(30.0);
                 });
             });
+        });
+    }
+
+    /// "성조 규칙" page: consonant class + syllable type + tone mark decide the tone.
+    fn tone_rules_page(&mut self, ui: &mut Ui, col_w: f32) {
+        ui.label(RichText::new("성조는 ① 자음 계급 ② 음절의 끝 ③ 성조 부호로 정해져요. 계급별 표를 보고 예시를 눌러 들어 보세요.").font(font(15.0)).color(muted()));
+        ui.add_space(8.0);
+        card_frame().show(ui, |ui| {
+            ui.set_width(col_w - 40.0);
+            ui.label(RichText::new("먼저 알아 둘 것").font(bold(17.0)));
+            ui.add_space(4.0);
+            for line in [
+                "산 음절: 긴 모음이거나, ㅇ ㄴ ㅁ ㅣ ㅜ(ง น ม ย ว)로 끝나는 음절",
+                "죽은 음절: 짧은 모음으로 끝나거나, ㄱ ㅂ ㄷ(ก บ ด 등)로 끝나는 음절",
+                "성조 부호: ่ 마이 엑 · ้ 마이 토 · ๊ 마이 뜨리 · ๋ 마이 짜따와",
+            ] {
+                ui.label(RichText::new(line).font(font(14.0)).color(muted()));
+            }
+        });
+        ui.add_space(8.0);
+        for class in 0..3u8 {
+            let col = [PRIMARY, ORANGE, BLUE][class as usize];
+            card_frame().inner_margin(Margin::symmetric(18, 12)).show(ui, |ui| {
+                ui.set_width(col_w - 40.0);
+                ui.label(RichText::new(crate::data::class_name(class)).font(bold(19.0)).color(col));
+                ui.label(RichText::new(crate::data::class_letters(class)).font(bold(21.0)));
+                ui.add_space(6.0);
+                for r in TONE_RULES.iter().filter(|r| r.class == class) {
+                    let t = tone_of(r.tone);
+                    ui.label(RichText::new(r.when).font(font(14.0)).color(muted()));
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(44.0, 36.0), Sense::hover());
+                        let p = ui.painter();
+                        p.rect_filled(rect, CornerRadius::same(10), lighten(TONE, 0.85));
+                        p.text(rect.center(), Align2::CENTER_CENTER, t.map(|t| t.mark).unwrap_or(""), bold(22.0), TONE);
+                        ui.label(RichText::new(t.map(|t| t.name).unwrap_or("")).font(bold(16.0)));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if small_speaker(ui, BLUE).clicked() {
+                                self.audio.speak(r.example, true);
+                            }
+                            ui.label(RichText::new(format!("{}  {} · {}", r.example, r.example_pron, r.example_ko)).font(font(15.0)));
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+            });
+            ui.add_space(8.0);
+        }
+        card_frame().show(ui, |ui| {
+            ui.set_width(col_w - 40.0);
+            ui.label(RichText::new("예외 두 가지").font(bold(17.0)));
+            ui.add_space(4.0);
+            ui.label(RichText::new("ห + 저자음(ง ญ น ม ย ร ล ว): 앞의 ห는 소리 나지 않고, 뒤 글자를 고자음처럼 읽어요. 예: หมู (무, 상승)").font(font(14.0)).color(muted()));
+            ui.label(RichText::new("อ + ย: อยาก อยู่ อย่า อย่าง 네 단어는 อ가 소리 나지 않고, ย를 중자음처럼 읽어요.").font(font(14.0)).color(muted()));
+            ui.add_space(4.0);
+            ui.label(RichText::new("이 규칙은 처음엔 어려워요. 단어마다 붙은 주황색 화살표로 소리를 익히다가, 나중에 규칙으로 확인해 보세요.").font(font(14.0)).color(muted()));
         });
     }
 
@@ -2090,6 +2171,8 @@ impl App {
                     LessonKind::Mistakes => ("오답".to_string(), RED),
                     LessonKind::Letters | LessonKind::Spelling => ("글자".to_string(), ORANGE),
                     LessonKind::Vowels => ("모음".to_string(), ORANGE),
+                    LessonKind::ConsonantClass => ("계급".to_string(), ORANGE),
+                    LessonKind::ToneRules => ("성조".to_string(), ORANGE),
                     _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
                 };
                 paint_note(p, hc, 26.0, c);

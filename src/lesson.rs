@@ -216,6 +216,10 @@ pub enum LessonKind {
     Vowels,
     /// Alphabet tab: build a word letter by letter (words the learner already met).
     Spelling,
+    /// Alphabet tab: is this consonant a mid, high or low class letter.
+    ConsonantClass,
+    /// Alphabet tab: which tone does this rule give.
+    ToneRules,
 }
 
 /// What the generator needs to know about the learner.
@@ -649,11 +653,13 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
             }
         }
         LessonKind::Letters => {
-            let mut idx: Vec<usize> = (0..crate::data::CONSONANTS.len()).collect();
+            // Every letter still in use (the two obsolete ones are left out).
+            let pool: Vec<&crate::data::Consonant> = crate::data::all_consonants().filter(|c| !crate::data::is_obsolete(c.letter)).collect();
+            let mut idx: Vec<usize> = (0..pool.len()).collect();
             rng.shuffle(&mut idx);
             for &i in idx.iter().take(10) {
-                let c = &crate::data::CONSONANTS[i];
-                let mut others: Vec<usize> = (0..crate::data::CONSONANTS.len()).filter(|&j| j != i && crate::data::CONSONANTS[j].name_pron != c.name_pron).collect();
+                let c = pool[i];
+                let mut others: Vec<usize> = (0..pool.len()).filter(|&j| j != i && pool[j].name_pron != c.name_pron).collect();
                 rng.shuffle(&mut others);
                 let mut opts: Vec<usize> = vec![i];
                 opts.extend(others.into_iter().take(3));
@@ -667,7 +673,7 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                     speak: Some(c.name.to_string()),
                     listen_only: false,
                     body: Body::Choice {
-                        options: opts.iter().map(|&j| Card::ko(&format!("{}  ({})", crate::data::CONSONANTS[j].name_pron, crate::data::CONSONANTS[j].sound))).collect(),
+                        options: opts.iter().map(|&j| Card::ko(&format!("{}  ({})", pool[j].name_pron, pool[j].sound))).collect(),
                         correct,
                     },
                     solution: format!("{} = {}  ({}) · {}", c.letter, c.name_pron, c.sound, c.meaning),
@@ -730,6 +736,48 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
             rng.shuffle(&mut uniq);
             for &(u, i) in uniq.iter().take(10) {
                 out.push(make(rng, Kind::Spell, u, i, 0, &[], ctx));
+            }
+        }
+        LessonKind::ConsonantClass => {
+            let pool: Vec<&crate::data::Consonant> = crate::data::all_consonants().filter(|c| !crate::data::is_obsolete(c.letter)).collect();
+            let mut idx: Vec<usize> = (0..pool.len()).collect();
+            rng.shuffle(&mut idx);
+            for &i in idx.iter().take(10) {
+                let c = pool[i];
+                out.push(Exercise {
+                    badge: "자음 계급",
+                    title: "이 자음은 어떤 계급일까요?".into(),
+                    prompt_thai: Some(Prompt { th: c.letter.to_string(), pron: c.name_pron.to_string(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: Some(c.name.to_string()),
+                    listen_only: false,
+                    body: Body::Choice { options: (0..3u8).map(|k| Card::ko(crate::data::class_name(k))).collect(), correct: c.class as usize },
+                    solution: format!("{} = {} ({})", c.letter, crate::data::class_name(c.class), c.name_pron),
+                    solution_speak: Some(c.name.to_string()),
+                    words: vec![],
+                    sentence: None,
+                });
+            }
+        }
+        LessonKind::ToneRules => {
+            let mut idx: Vec<usize> = (0..crate::data::TONE_RULES.len()).collect();
+            rng.shuffle(&mut idx);
+            for &i in idx.iter().take(10) {
+                let r = &crate::data::TONE_RULES[i];
+                let correct = TONES.iter().position(|t| t.code == r.tone).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "성조 규칙",
+                    title: "이 조건이면 성조는?".into(),
+                    prompt_thai: None,
+                    prompt_ko: Some(format!("{} + {}", crate::data::class_name(r.class), r.when)),
+                    speak: None,
+                    listen_only: false,
+                    body: Body::Choice { options: TONES.iter().map(|t| Card::ko(&format!("{} {}", t.mark, t.name))).collect(), correct },
+                    solution: format!("{} {} · 예: {} ({})", tone_of(r.tone).map(|t| t.mark).unwrap_or(""), tone_of(r.tone).map(|t| t.name).unwrap_or(""), r.example, r.example_pron),
+                    solution_speak: Some(r.example.to_string()),
+                    words: vec![],
+                    sentence: None,
+                });
             }
         }
         LessonKind::Mistakes => {
@@ -818,7 +866,7 @@ pub fn selftest(check_audio: bool) -> Result<String, String> {
             check_ex(&ex, seed % 2 == 0)?;
             n += 1;
         }
-        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling] {
+        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules] {
             for focus_set in [&[][..], &focus[..]] {
                 let es = build(kind, &mut rng, &Ctx { tts: true, female: false, focus: focus_set, mistakes: &[] });
                 if es.len() < 8 {
@@ -930,8 +978,11 @@ pub fn all_speech() -> Vec<String> {
     for (t, _, _) in EXTRA_TOKENS {
         add(t.to_string());
     }
-    for c in crate::data::CONSONANTS {
+    for c in crate::data::all_consonants() {
         add(c.name.to_string());
+    }
+    for r in crate::data::TONE_RULES {
+        add(r.example.to_string());
     }
     for v in crate::data::VOWELS {
         add(v.example.to_string());
