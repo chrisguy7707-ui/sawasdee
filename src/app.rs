@@ -3464,20 +3464,23 @@ fn paint_pitch_compare(ui: &mut Ui, native: &[f32], mine: &[f32]) {
     p.rect_filled(rect, CornerRadius::same(14), surface());
     p.rect_stroke(rect, CornerRadius::same(14), Stroke::new(1.2, border()), StrokeKind::Inside);
     let plot = rect.shrink2(vec2(14.0, 16.0));
-    p.line_segment([Pos2::new(plot.left(), plot.center().y), Pos2::new(plot.right(), plot.center().y)], Stroke::new(1.0, border()));
     if mine.is_empty() || native.is_empty() {
         let g = p.layout("목소리의 높낮이를 잘 잡지 못했어요. 조금 더 크게, 조용한 곳에서 다시 해 보세요".to_string(), font(12.5), muted(), rect.width() - 28.0);
         p.galley(rect.center() - g.size() / 2.0, g, muted());
         return;
     }
-    let range = 9.0f32; // semitones above and below the middle line
+    // The vertical range fits the two curves (at least 4.5 semitones tall), so even a small rise or fall fills the graph.
+    let all = native.iter().chain(mine.iter());
+    let (lo, hi) = all.fold((f32::MAX, f32::MIN), |(l, h), &v| (l.min(v), h.max(v)));
+    let span = (hi - lo).max(4.5);
+    let mid = (hi + lo) / 2.0;
     let line = |curve: &[f32], color: Color32| {
         let pts: Vec<Pos2> = curve
             .iter()
             .enumerate()
             .map(|(i, &v)| {
                 let x = plot.left() + plot.width() * i as f32 / (curve.len() - 1) as f32;
-                let y = plot.center().y - (v.clamp(-range, range) / range) * (plot.height() / 2.0);
+                let y = plot.center().y - ((v - mid) / span) * plot.height() * 0.92;
                 Pos2::new(x, y)
             })
             .collect();
