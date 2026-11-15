@@ -7,6 +7,7 @@
 // and (2) every UIWindow created afterwards is created inside that scene (see +load below).
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <UserNotifications/UserNotifications.h>
 
 extern void sawasdee_ios_main(void);
 
@@ -81,4 +82,73 @@ int main(int argc, char *argv[]) {
         sawasdee_ios_main();  // starts the UIKit run loop and never returns
     }
     return 0;
+}
+
+
+// ---- Daily study reminder (called from src/notify.rs) ----
+// Seven one-time notifications for the next 7 days, so a day already studied can be skipped
+// and a person who stops opening the app gets at most 7 reminders.
+static NSString *const kReminderPrefix = @"sawasdee.reminder.";
+
+void sawasdee_notify_request(void) {
+    [[UNUserNotificationCenter currentNotificationCenter]
+        requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
+                      completionHandler:^(BOOL granted, NSError *error) {}];
+}
+
+void sawasdee_notify_cancel(void) {
+    NSMutableArray *ids = [NSMutableArray array];
+    for (int i = 0; i < 8; i++) [ids addObject:[NSString stringWithFormat:@"%@%d", kReminderPrefix, i]];
+    [[UNUserNotificationCenter currentNotificationCenter] removePendingNotificationRequestsWithIdentifiers:ids];
+}
+
+void sawasdee_notify_schedule(int minutes, const char *title, const char *bodies, int skip_today) {
+    sawasdee_notify_cancel();
+    NSString *t = [NSString stringWithUTF8String:title];
+    NSArray<NSString *> *msgs = [[NSString stringWithUTF8String:bodies] componentsSeparatedByString:@"\n"];
+    NSCalendar *cal = [NSCalendar currentCalendar];
+    NSDate *now = [NSDate date];
+    for (int i = 0; i < 7; i++) {
+        NSDate *day = [cal dateByAddingUnit:NSCalendarUnitDay value:i toDate:now options:0];
+        NSDateComponents *c = [cal components:(NSCalendarUnitYear | NSCalendarUnitMonth | NSCalendarUnitDay) fromDate:day];
+        c.hour = minutes / 60;
+        c.minute = minutes % 60;
+        NSDate *when = [cal dateFromComponents:c];
+        if ([when timeIntervalSinceNow] <= 30) continue;              // time already passed today
+        if (i == 0 && skip_today) continue;                           // already studied today
+        UNMutableNotificationContent *content = [UNMutableNotificationContent new];
+        content.title = t;
+        content.body = msgs[i % msgs.count];
+        content.sound = [UNNotificationSound defaultSound];
+        UNCalendarNotificationTrigger *trig = [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:c repeats:NO];
+        UNNotificationRequest *req = [UNNotificationRequest requestWithIdentifier:[NSString stringWithFormat:@"%@%d", kReminderPrefix, i]
+                                                                          content:content trigger:trig];
+        [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:req withCompletionHandler:nil];
+    }
+}
+
+void sawasdee_notify_test(const char *title, const char *body) {
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new];
+    content.title = [NSString stringWithUTF8String:title];
+    content.body = [NSString stringWithUTF8String:body];
+    content.sound = [UNNotificationSound defaultSound];
+    UNTimeIntervalNotificationTrigger *trig = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:3 repeats:NO];
+    [[UNUserNotificationCenter currentNotificationCenter]
+        addNotificationRequest:[UNNotificationRequest requestWithIdentifier:@"sawasdee.test" content:content trigger:trig]
+         withCompletionHandler:nil];
+}
+
+// While the app is open, still show the notification (iOS hides it by default).
+@interface SawasdeeNotifyDelegate : NSObject <UNUserNotificationCenterDelegate>
+@end
+@implementation SawasdeeNotifyDelegate
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)n
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))handler {
+    handler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
+}
+@end
+
+__attribute__((constructor)) static void sawasdee_notify_setup(void) {
+    static SawasdeeNotifyDelegate *d; d = [SawasdeeNotifyDelegate new];
+    [UNUserNotificationCenter currentNotificationCenter].delegate = d;
 }

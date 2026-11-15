@@ -18,5 +18,10 @@ if [ ! -f "$CARGO_APK_RELEASE_KEYSTORE" ] || [ -z "$CARGO_APK_RELEASE_KEYSTORE_P
   echo "Missing signing key: need android/release.keystore and android/keystore.password" >&2
   exit 1
 fi
+# 16 KB memory pages: Google Play requires native libraries to support them (Android 15+ devices).
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,-z,max-page-size=16384"
 cargo apk build --release --lib
+# cargo-apk made the native library; tools/android_pack.py builds the final APK around it
+# (own manifest, reminder Java code, alignment, signing).
+python3 "$APP_DIR/tools/android_pack.py"
 echo "APK: target/release/apk/Sawasdee.apk"

@@ -49,6 +49,7 @@ targets:
       - sdk: CoreAudio.framework
       - sdk: AVFoundation.framework
       - sdk: Foundation.framework
+      - sdk: UserNotifications.framework
     settings:
       base:
         # Link the Rust static library by its full path (a leftover .dylib must never win).

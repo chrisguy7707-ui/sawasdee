@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		105492A1BB050F461E3E06C8 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 51B9C71C2BEDE530DFC1E0FC /* UserNotifications.framework */; };
 		16BD45925380BA4048B698C0 /* CoreText.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2ABB6357D8DC594E7C01DE9A /* CoreText.framework */; };
 		2AC7E237036FC241190F80D9 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C043B40D6F89B2DF0A2753DA /* Foundation.framework */; };
 		300347EC03627A37532092A7 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E60852F5A11EABBF5F3B295 /* AudioToolbox.framework */; };
@@ -26,6 +27,7 @@
 		2ABB6357D8DC594E7C01DE9A /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
 		2CED45ABD7BB91007278DC24 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		41F71ACE31EB2A7D5C5BB489 /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
+		51B9C71C2BEDE530DFC1E0FC /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
 		6E60852F5A11EABBF5F3B295 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		82B5AD48B016731908627185 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		9B993DAA854B1C891B261B59 /* Sawasdee.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Sawasdee.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -50,6 +52,7 @@
 				9FE7A1D3DE4DB22E710F5268 /* CoreAudio.framework in Frameworks */,
 				52043309C4553B64289B6BC5 /* AVFoundation.framework in Frameworks */,
 				2AC7E237036FC241190F80D9 /* Foundation.framework in Frameworks */,
+				105492A1BB050F461E3E06C8 /* UserNotifications.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -68,6 +71,7 @@
 				82B5AD48B016731908627185 /* Metal.framework */,
 				A451EDC4FDAEE3DABD26591D /* QuartzCore.framework */,
 				DF69B9729A7372742FAB6763 /* UIKit.framework */,
+				51B9C71C2BEDE530DFC1E0FC /* UserNotifications.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";

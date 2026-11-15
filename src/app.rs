@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::audio::Audio;
 use crate::data::{tone_of, CONSONANTS, LESSONS_PER_UNIT, TONES, TONE_RULES, UNITS, VOWELS};
 use crate::kit::*;
+use crate::notify;
 use crate::lesson::{self, Body, Exercise, LessonKind, Rng};
 
 /// Right answers in a row that take a question out of the mistake notebook.
@@ -58,6 +59,9 @@ pub struct Progress {
     pub stats: BTreeMap<String, WordStat>,
     /// 0 = follow the computer, 1 = light, 2 = dark.
     pub theme: u8,
+    /// Daily study reminder: on/off and the time, in minutes after midnight.
+    pub reminder_on: bool,
+    pub reminder_min: u32,
 }
 
 /// One entry of the mistake notebook: a word or a sentence answered wrongly.
@@ -107,6 +111,8 @@ impl Default for Progress {
             notebook: Vec::new(),
             stats: BTreeMap::new(),
             theme: 0,
+            reminder_on: false,
+            reminder_min: 20 * 60,
         }
     }
 }
@@ -552,6 +558,10 @@ impl App {
                 _ => {}
             }
         }
+        if app.shot.is_none() && app.p.reminder_on {
+            // Opening the app re-books the next 7 days (and skips today if already studied).
+            app.sync_reminder();
+        }
         app
     }
 
@@ -618,6 +628,10 @@ impl App {
             self.p.best_streak = self.p.best_streak.max(self.p.streak);
             Some(self.p.streak)
         };
+        if streak_up.is_some() && self.p.reminder_on {
+            // Studied today: move today's reminder out of the way.
+            notify::schedule(self.p.reminder_min, true);
+        }
         self.p.xp_total += xp;
         *self.p.xp_by_day.entry(t).or_insert(0) += xp;
         self.p.lessons_done += 1;
@@ -1578,9 +1592,55 @@ impl App {
     }
 
     /// Profile "정보" sections: learning summary, notice about AI voice and checking, licenses.
+    /// Books (or cancels) the daily reminders to match the saved settings.
+    fn sync_reminder(&self) {
+        if self.p.reminder_on {
+            notify::schedule(self.p.reminder_min, self.p.last_day == today());
+        } else {
+            notify::cancel();
+        }
+    }
+
     fn about_sections(&mut self, ui: &mut Ui, col_w: f32) {
         ui.label(RichText::new("정보").font(bold(21.0)));
         ui.add_space(4.0);
+        egui::CollapsingHeader::new(RichText::new("학습 알림").font(bold(17.0))).default_open(true).show(ui, |ui| {
+            if !notify::supported() {
+                ui.label(RichText::new("학습 알림은 휴대폰에서만 쓸 수 있어요.").font(font(14.0)).color(muted()));
+                return;
+            }
+            let mut changed = false;
+            let mut on = self.p.reminder_on;
+            if ui.checkbox(&mut on, RichText::new("매일 학습 알림 받기").font(font(15.0))).changed() {
+                self.p.reminder_on = on;
+                if on {
+                    notify::request_permission();
+                }
+                changed = true;
+            }
+            if self.p.reminder_on {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("알림 시각  {}", notify::time_text(self.p.reminder_min))).font(font(15.0)));
+                    if ui.button(RichText::new("−30분").font(font(14.0))).clicked() {
+                        self.p.reminder_min = (self.p.reminder_min + 24 * 60 - 30) % (24 * 60);
+                        changed = true;
+                    }
+                    if ui.button(RichText::new("+30분").font(font(14.0))).clicked() {
+                        self.p.reminder_min = (self.p.reminder_min + 30) % (24 * 60);
+                        changed = true;
+                    }
+                });
+                if ui.button(RichText::new("알림 시험").font(font(14.0))).clicked() {
+                    notify::request_permission();
+                    notify::test();
+                }
+            }
+            ui.add_space(2.0);
+            ui.label(RichText::new("정해 둔 시각에 알림이 한 번 와요. 그날 이미 공부했으면 쉬고, 앱을 7일 동안 열지 않으면 알림이 멈춰요. 알림이 오지 않으면 휴대폰 설정에서 알림을 허용해 주세요.").font(font(13.0)).color(muted()));
+            if changed {
+                self.sync_reminder();
+            }
+        });
         egui::CollapsingHeader::new(RichText::new("학습 요약").font(bold(17.0))).show(ui, |ui| {
             let p = &self.p;
             let finished = p.done.iter().filter(|&&d| d as usize >= LESSONS_PER_UNIT).count();
@@ -1612,7 +1672,7 @@ impl App {
                 "태국어 음성은 AI 음성 합성(Google Cloud Chirp 3 HD)으로 만들었어요. 사람이 녹음한 것이 아니라서 발음이나 성조가 어색한 곳이 있을 수 있어요.",
                 "단어, 문장, 한글 발음, 성조 표시는 AI의 도움으로 만들었고 태국어 원어민의 검수가 아직 끝나지 않았어요. 틀린 곳을 발견하면 알려 주세요.",
                 "한글 발음은 근사치예요. 한글로는 태국어의 성조와 길이를 모두 나타낼 수 없어요.",
-                "이 앱은 카메라, 마이크, 위치 같은 권한을 쓰지 않고, 학습 기록은 이 기기 안에만 저장돼요.",
+                "이 앱은 카메라, 마이크, 위치 같은 권한을 쓰지 않아요(학습 알림을 켤 때만 알림 권한을 물어봐요). 학습 기록은 이 기기 안에만 저장돼요.",
             ] {
                 ui.label(RichText::new(l).font(font(14.0)));
                 ui.add_space(4.0);

@@ -3,6 +3,7 @@ pub mod audio;
 pub mod data;
 pub mod kit;
 pub mod lesson;
+pub mod notify;
 
 use std::path::PathBuf;
 
@@ -91,6 +92,8 @@ pub fn desktop_main() -> eframe::Result {
 fn android_main(android_app: winit::platform::android::activity::AndroidApp) {
     android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("sawasdee"));
     log::info!("android_main started");
+    // The daily reminder calls Java through JNI and needs the Java VM and the activity.
+    notify::init_android(android_app.vm_as_ptr(), android_app.activity_as_ptr());
     let mut options = eframe::NativeOptions::default();
     // Where progress is saved (the app's private folder).
     if let Some(dir) = android_app.internal_data_path() {
