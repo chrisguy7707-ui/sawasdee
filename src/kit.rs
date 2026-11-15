@@ -103,7 +103,7 @@ pub fn text_size(ui: &Ui, text: &str, f: FontId) -> Vec2 {
 pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: bool) -> Response {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
-    let depth = 4.0;
+    let depth = 3.0;
     let pressed = enabled && resp.is_pointer_button_down_on();
     let (face_c, edge_c, text_c) = if enabled {
         let f = if resp.hovered() { lighten(fill, 0.08) } else { fill };
@@ -112,7 +112,7 @@ pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: boo
         (locked(), darken(locked(), 0.85), faint())
     };
     let p = ui.painter();
-    let r = CornerRadius::same(14);
+    let r = CornerRadius::same(((size.y - depth) / 2.0).clamp(12.0, 30.0) as u8);
     p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max), r, edge_c);
     let face = if pressed {
         Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max)
@@ -134,7 +134,7 @@ pub fn outline_button(ui: &mut Ui, text: &str, size: Vec2, text_color: Color32) 
     let depth = 3.0;
     let pressed = resp.is_pointer_button_down_on();
     let p = ui.painter();
-    let r = CornerRadius::same(14);
+    let r = CornerRadius::same(((size.y - depth) / 2.0).clamp(12.0, 30.0) as u8);
     p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max), r, border());
     let face = if pressed {
         Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max)
@@ -503,4 +503,30 @@ pub fn paint_note(p: &Painter, c: Pos2, s: f32, color: Color32) {
         p.line_segment([Pos2::new(page.left() + s * 0.17, y), Pos2::new(page.right() - s * 0.12, y)], Stroke::new((s * 0.07).max(1.5), WHITE));
     }
     p.line_segment([Pos2::new(page.left() + s * 0.08, page.top() + s * 0.1), Pos2::new(page.left() + s * 0.08, page.bottom() - s * 0.1)], Stroke::new((s * 0.06).max(1.2), WHITE));
+}
+
+/// Outline points of a soft diamond (a rounded rhombus), the shape of the lesson path nodes and
+/// a nod to Thai ornament. `p` near 1 is a sharp diamond, 2 is a circle; 1.45 is in between.
+pub fn diamond_points(c: Pos2, r: f32, p: f32) -> Vec<Pos2> {
+    let n = 40;
+    (0..n)
+        .map(|i| {
+            let a = std::f32::consts::TAU * i as f32 / n as f32;
+            let (s, co) = a.sin_cos();
+            let x = co.signum() * co.abs().powf(2.0 / p);
+            let y = s.signum() * s.abs().powf(2.0 / p);
+            c + vec2(x, y) * r
+        })
+        .collect()
+}
+
+pub fn paint_diamond(pt: &Painter, c: Pos2, r: f32, fill: Color32) {
+    pt.add(egui::Shape::convex_polygon(diamond_points(c, r, 1.4), fill, Stroke::NONE));
+}
+
+/// A row of small diamonds, used as a quiet Thai-style border on the unit banners.
+pub fn paint_diamond_row(pt: &Painter, left_center: Pos2, count: usize, step: f32, r: f32, color: Color32) {
+    for i in 0..count {
+        paint_diamond(pt, left_center + vec2(step * i as f32, 0.0), r, color);
+    }
 }

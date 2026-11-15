@@ -1269,6 +1269,7 @@ impl App {
                 let p = ui.painter();
                 p.rect_filled(banner.translate(vec2(0.0, 4.0)), CornerRadius::same(16), darken(bc, 0.8));
                 p.rect_filled(banner, CornerRadius::same(16), bc);
+                paint_diamond_row(p, banner.left_bottom() + vec2(30.0, -9.0), (col_w / 22.0) as usize - 2, 22.0, 4.5, Color32::from_white_alpha(38));
                 p.text(banner.left_top() + vec2(22.0, 18.0), Align2::LEFT_TOP, format!("단원 {} · {}", u + 1, crate::data::level_name(u)), bold(14.0), Color32::from_white_alpha(225));
                 p.text(banner.left_top() + vec2(22.0, 38.0), Align2::LEFT_TOP, unit.title, bold(23.0), WHITE);
                 p.text(banner.right_center() + vec2(-22.0, 0.0), Align2::RIGHT_CENTER, unit.desc, font(14.0), Color32::from_white_alpha(235));
@@ -1305,19 +1306,16 @@ impl App {
                     let lift = if pressed { 6.0 } else { 0.0 };
                     if state == 2 {
                         // ring
-                        p.circle_stroke(c + vec2(0.0, 3.0), r + 10.0, Stroke::new(7.0, track()));
-                        let frac = 0.25;
-                        let pts: Vec<Pos2> = (0..=24)
-                            .map(|k| {
-                                let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * frac * k as f32 / 24.0;
-                                c + vec2(0.0, 3.0) + vec2(a.cos(), a.sin()) * (r + 10.0)
-                            })
-                            .collect();
-                        p.add(egui::Shape::line(pts, Stroke::new(7.0, color)));
+                        let mut ring = diamond_points(c + vec2(0.0, 3.0), r + 13.0, 1.45);
+                        ring.push(ring[0]);
+                        p.add(egui::Shape::line(ring.clone(), Stroke::new(5.0, track())));
+                        // the first quarter of the ring, in the unit's colour
+                        let part: Vec<Pos2> = ring[30..].iter().chain(ring[..1].iter()).copied().collect();
+                        p.add(egui::Shape::line(part, Stroke::new(5.0, color)));
                     }
-                    p.circle_filled(c + vec2(0.0, 6.0), r, edge);
+                    paint_diamond(p, c + vec2(0.0, 6.0), r + 3.0, edge);
                     let fc = if resp.hovered() && state != 0 { lighten(face, 0.08) } else { face };
-                    p.circle_filled(c + vec2(0.0, lift), r, fc);
+                    paint_diamond(p, c + vec2(0.0, lift), r + 3.0, fc);
                     let ic = c + vec2(0.0, lift);
                     let review = l == LESSONS_PER_UNIT - 1;
                     match state {
