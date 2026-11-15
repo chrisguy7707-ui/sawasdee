@@ -658,6 +658,14 @@ impl eframe::App for App {
             egui::Panel::top("android_top").exact_size(38.0).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
             egui::Panel::bottom("android_bottom").exact_size(16.0).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
         }
+        // iPhone: keep clear of the notch / Dynamic Island (top) and the home bar (bottom).
+        #[cfg(target_os = "ios")]
+        {
+            let (top, bottom) = crate::safe_insets();
+            let band = if self.splash { Color32::from_rgb(14, 120, 108) } else { bg() };
+            egui::Panel::top("ios_top").exact_size(top).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
+            egui::Panel::bottom("ios_bottom").exact_size(bottom).show_separator_line(false).frame(egui::Frame::NONE.fill(bg())).show(ui, |_| {});
+        }
         if self.icon_mode {
             egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(Color32::from_rgb(20, 170, 150))).show(ui, |ui| {
                 let r = ui.max_rect();
@@ -1896,7 +1904,9 @@ impl App {
                         ui.label(RichText::new("앱").font(bold(21.0)));
                         ui.label(RichText::new(format!("버전 {}", APP_VERSION)).font(font(14.0)).color(muted()));
                     });
-                    if !self.confirm_exit {
+                    // iPhone apps do not close themselves (Apple's rules): no quit button there.
+                    if cfg!(target_os = "ios") {
+                    } else if !self.confirm_exit {
                         if button3d(ui, "앱 종료하기", vec2(col_w.min(320.0), 50.0), RED, true).clicked() {
                             self.confirm_exit = true;
                         }
