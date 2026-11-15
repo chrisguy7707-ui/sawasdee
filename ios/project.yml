@@ -23,7 +23,7 @@ targets:
     info:
       path: Sawasdee/Info.plist
       properties:
-        CFBundleDisplayName: 사왓디-태국어 학습앱
+        CFBundleDisplayName: 사왓디
         CFBundleName: Sawasdee
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]

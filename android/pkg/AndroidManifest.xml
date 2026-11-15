@@ -16,6 +16,7 @@
 
         <activity
             android:name="android.app.NativeActivity"
+            android:label="사왓디"
             android:exported="true"
             android:screenOrientation="portrait"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode">
