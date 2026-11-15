@@ -35,6 +35,43 @@ def run(cmd, **kw):
     return r
 
 
+BUNDLETOOL = os.environ.get("BUNDLETOOL", os.path.expanduser("~/android-dev/bundletool.jar"))
+
+
+def build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, pw):
+    """Google Play takes an .aab (app bundle), not an .apk. Same code, different packaging:
+    resources in protobuf form, laid out as a 'base' module, then bundletool + jarsigner."""
+    if not os.path.exists(BUNDLETOOL):
+        print("(skipping .aab: bundletool.jar not found at " + BUNDLETOOL + ")")
+        return
+    res_zip = os.path.join(tmp, "res.zip")
+    proto = os.path.join(tmp, "base_proto.apk")
+    run([aapt2, "link", "--proto-format", "-o", proto, "-I", android_jar,
+         "--manifest", os.path.join(APP, "android", "pkg", "AndroidManifest.xml"),
+         "-R", res_zip, "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
+         "--version-code", str(version_code), "--version-name", version,
+         "--compile-sdk-version-code", PLATFORM, "--compile-sdk-version-name", "16"])
+    module = os.path.join(tmp, "base.zip")
+    with zipfile.ZipFile(proto) as zin, zipfile.ZipFile(module, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            name = "manifest/AndroidManifest.xml" if info.filename == "AndroidManifest.xml" else info.filename
+            zout.writestr(name, zin.read(info.filename))
+        zout.write(os.path.join(dex_dir, "classes.dex"), "dex/classes.dex")
+        zout.write(so, "lib/arm64-v8a/libsawasdee.so")
+    cfg = os.path.join(tmp, "BundleConfig.json")
+    with open(cfg, "w") as f:
+        f.write('{"optimizations":{"splitsConfig":{"splitDimension":[{"value":"LANGUAGE","negate":true}]},'
+                '"uncompressNativeLibraries":{"enabled":true}},"compression":{"uncompressedGlob":["**/*.so"]}}')
+    out = os.path.join(APP, "target", "release", "apk", "Sawasdee.aab")
+    if os.path.exists(out):
+        os.remove(out)
+    java = os.path.join(JAVA_HOME, "bin", "java")
+    run([java, "-jar", BUNDLETOOL, "build-bundle", "--modules=" + module, "--output=" + out, "--config=" + cfg])
+    run([os.path.join(JAVA_HOME, "bin", "jarsigner"), "-keystore", ks, "-storepass", pw,
+         "-sigalg", "SHA256withRSA", "-digestalg", "SHA-256", out, os.environ.get("KEY_ALIAS", "key0")])
+    print(f"AAB: {out}  ({os.path.getsize(out) / 1e6:.1f} MB)")
+
+
 def main():
     # d8 and apksigner are scripts that need a Java runtime
     os.environ["JAVA_HOME"] = JAVA_HOME
@@ -98,6 +135,7 @@ def main():
         if os.path.exists(final):
             os.remove(final)
         run([apksigner, "sign", "--ks", ks, "--ks-pass", "pass:" + pw, "--out", final, aligned])
+        build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, pw)
         r = run([apksigner, "verify", "--print-certs", final])
         cert = [l for l in r.stdout.splitlines() if "SHA-256" in l]
         print(f"APK: {final}  ({os.path.getsize(final) / 1e6:.1f} MB, version {version}, code {version_code})")
