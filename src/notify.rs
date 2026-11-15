@@ -60,6 +60,36 @@ pub fn clip_get() -> Option<String> {
     imp::clip_get()
 }
 
+/// Result of asking to start recording the learner's voice.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RecStart {
+    Ok,
+    /// The system is asking for microphone permission; the learner taps record again after allowing.
+    NeedPermission,
+    Unsupported,
+    Error,
+}
+
+/// Recording the learner's voice works on phones only.
+pub fn rec_supported() -> bool {
+    supported()
+}
+pub fn rec_start() -> RecStart {
+    imp::rec_start()
+}
+pub fn rec_stop() {
+    imp::rec_stop();
+}
+pub fn rec_play() {
+    imp::rec_play();
+}
+pub fn rec_has() -> bool {
+    imp::rec_has()
+}
+pub fn rec_clear() {
+    imp::rec_clear();
+}
+
 // ------------------------------------------------------------------------- iPhone
 #[cfg(target_os = "ios")]
 mod imp {
@@ -74,6 +104,32 @@ mod imp {
         fn sawasdee_clip_set(text: *const c_char);
         fn sawasdee_clip_get() -> *mut c_char;
         fn free(p: *mut std::os::raw::c_void);
+        fn sawasdee_rec_start() -> i32;
+        fn sawasdee_rec_stop();
+        fn sawasdee_rec_play();
+        fn sawasdee_rec_has() -> i32;
+        fn sawasdee_rec_clear();
+    }
+
+    pub fn rec_start() -> super::RecStart {
+        // SAFETY: plain functions from ios/Sawasdee/main.m.
+        match unsafe { sawasdee_rec_start() } {
+            0 => super::RecStart::Ok,
+            1 => super::RecStart::NeedPermission,
+            _ => super::RecStart::Error,
+        }
+    }
+    pub fn rec_stop() {
+        unsafe { sawasdee_rec_stop() }
+    }
+    pub fn rec_play() {
+        unsafe { sawasdee_rec_play() }
+    }
+    pub fn rec_has() -> bool {
+        unsafe { sawasdee_rec_has() != 0 }
+    }
+    pub fn rec_clear() {
+        unsafe { sawasdee_rec_clear() }
     }
 
     pub fn clip_set(text: &str) -> bool {
@@ -155,6 +211,37 @@ mod imp {
         result.ok()
     }
 
+    pub fn rec_start() -> super::RecStart {
+        match with_class("com.sawasdee.thai.Recorder", |env, act, cls| {
+            Ok(env.call_static_method(cls, "start", "(Landroid/app/Activity;)I", &[JValue::Object(act)])?.i()?)
+        }) {
+            Some(0) => super::RecStart::Ok,
+            Some(1) => super::RecStart::NeedPermission,
+            _ => super::RecStart::Error,
+        }
+    }
+    pub fn rec_stop() {
+        with_class("com.sawasdee.thai.Recorder", |env, _act, cls| {
+            env.call_static_method(cls, "stop", "()V", &[])?;
+            Ok(())
+        });
+    }
+    pub fn rec_play() {
+        with_class("com.sawasdee.thai.Recorder", |env, act, cls| {
+            env.call_static_method(cls, "play", "(Landroid/app/Activity;)V", &[JValue::Object(act)])?;
+            Ok(())
+        });
+    }
+    pub fn rec_has() -> bool {
+        with_class("com.sawasdee.thai.Recorder", |env, _act, cls| Ok(env.call_static_method(cls, "hasRecording", "()Z", &[])?.z()?)).unwrap_or(false)
+    }
+    pub fn rec_clear() {
+        with_class("com.sawasdee.thai.Recorder", |env, _act, cls| {
+            env.call_static_method(cls, "clear", "()V", &[])?;
+            Ok(())
+        });
+    }
+
     pub fn clip_set(text: &str) -> bool {
         with_class("com.sawasdee.thai.Clip", |env, act, cls| {
             let t = env.new_string(text)?;
@@ -215,6 +302,15 @@ pub use imp::init as init_android;
 // ---------------------------------------------------------------------- computers
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod imp {
+    pub fn rec_start() -> super::RecStart {
+        super::RecStart::Unsupported
+    }
+    pub fn rec_stop() {}
+    pub fn rec_play() {}
+    pub fn rec_has() -> bool {
+        false
+    }
+    pub fn rec_clear() {}
     pub fn clip_set(_text: &str) -> bool {
         false
     }

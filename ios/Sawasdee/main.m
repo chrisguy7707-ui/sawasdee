@@ -8,6 +8,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <UserNotifications/UserNotifications.h>
+#import <AVFoundation/AVFoundation.h>
 
 extern void sawasdee_ios_main(void);
 
@@ -162,4 +163,78 @@ void sawasdee_clip_set(const char *text) {
 char *sawasdee_clip_get(void) {
     NSString *s = [UIPasteboard generalPasteboard].string;
     return s ? strdup([s UTF8String]) : NULL;
+}
+
+// ---- Recording the learner's own voice (compare with the native recording) ----
+// The file lives in the app's temporary folder, is never uploaded, and is replaced by the next recording.
+static AVAudioRecorder *gRecorder = nil;
+static AVAudioPlayer *gMyPlayer = nil;
+static BOOL gHasRecording = NO;
+
+static NSURL *sawasdee_rec_url(void) {
+    return [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"my_voice.m4a"]];
+}
+
+static int sawasdee_mic_state(void) {   // 0 granted, 1 undetermined, 2 denied
+    if (@available(iOS 17.0, *)) {
+        switch ([AVAudioApplication sharedInstance].recordPermission) {
+            case AVAudioApplicationRecordPermissionGranted: return 0;
+            case AVAudioApplicationRecordPermissionUndetermined: return 1;
+            default: return 2;
+        }
+    }
+    switch ([AVAudioSession sharedInstance].recordPermission) {
+        case AVAudioSessionRecordPermissionGranted: return 0;
+        case AVAudioSessionRecordPermissionUndetermined: return 1;
+        default: return 2;
+    }
+}
+
+// 0 = recording, 1 = permission needed (asked now, or refused: the learner must allow it in Settings), 2 = error
+int sawasdee_rec_start(void) {
+    int st = sawasdee_mic_state();
+    if (st != 0) {
+        if (st == 1) {
+            void (^done)(BOOL) = ^(BOOL granted) {};
+            if (@available(iOS 17.0, *)) { [AVAudioApplication requestRecordPermissionWithCompletionHandler:done]; }
+            else { [[AVAudioSession sharedInstance] requestRecordPermission:done]; }
+        }
+        return 1;
+    }
+    [gMyPlayer stop]; gMyPlayer = nil;
+    NSError *err = nil;
+    AVAudioSession *s = [AVAudioSession sharedInstance];
+    [s setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker error:&err];
+    [s setActive:YES error:&err];
+    NSDictionary *settings = @{AVFormatIDKey: @(kAudioFormatMPEG4AAC), AVSampleRateKey: @44100, AVNumberOfChannelsKey: @1,
+                               AVEncoderBitRateKey: @96000};
+    gRecorder = [[AVAudioRecorder alloc] initWithURL:sawasdee_rec_url() settings:settings error:&err];
+    if (!gRecorder || ![gRecorder record]) { gRecorder = nil; return 2; }
+    gHasRecording = NO;
+    return 0;
+}
+
+void sawasdee_rec_stop(void) {
+    if (!gRecorder) return;
+    NSTimeInterval len = gRecorder.currentTime;
+    [gRecorder stop];
+    gRecorder = nil;
+    gHasRecording = len > 0.3;
+}
+
+int sawasdee_rec_has(void) { return gHasRecording ? 1 : 0; }
+
+void sawasdee_rec_play(void) {
+    if (!gHasRecording) return;
+    [gMyPlayer stop];
+    NSError *err = nil;
+    gMyPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:sawasdee_rec_url() error:&err];
+    [gMyPlayer play];
+}
+
+void sawasdee_rec_clear(void) {
+    [gRecorder stop]; gRecorder = nil;
+    [gMyPlayer stop]; gMyPlayer = nil;
+    gHasRecording = NO;
+    [[NSFileManager defaultManager] removeItemAtURL:sawasdee_rec_url() error:nil];
 }

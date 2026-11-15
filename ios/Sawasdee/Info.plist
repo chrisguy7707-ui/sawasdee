@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>내 발음을 녹음해서 원어민 소리와 비교해 들을 때만 마이크를 사용해요. 녹음은 기기 안에만 잠깐 저장되고 어디로도 전송되지 않아요.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -4,6 +4,8 @@
 
     <!-- Android 13+: needed to show the daily study reminder. Asked only when the person turns it on. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Only when the learner taps "record" to compare their own pronunciation; asked at that moment. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Books the reminder again after the phone restarts. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 

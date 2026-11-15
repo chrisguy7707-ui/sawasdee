@@ -35,6 +35,7 @@ targets:
               - UISceneConfigurationName: Default Configuration
                 UISceneDelegateClassName: SawasdeeSceneDelegate
         ITSAppUsesNonExemptEncryption: false
+        NSMicrophoneUsageDescription: 내 발음을 녹음해서 원어민 소리와 비교해 들을 때만 마이크를 사용해요. 녹음은 기기 안에만 잠깐 저장되고 어디로도 전송되지 않아요.
     preBuildScripts:
       - name: Build Rust library
         script: sh "$SRCROOT/build_rust.sh"

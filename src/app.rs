@@ -25,6 +25,16 @@ const GRADUATE: u8 = 2;
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const STORE_KEY: &str = "progress_v1";
 
+/// Where the voice-comparison practice is.
+#[derive(Clone, Copy, PartialEq)]
+enum RecUi {
+    Idle,
+    /// Recording since this time (seconds).
+    Recording(f64),
+    /// A recording of the learner exists and can be played.
+    Have,
+}
+
 const BACKUP_HEADER: &str = "SAWASDEE-BACKUP-1";
 
 fn today() -> i32 {
@@ -355,6 +365,9 @@ pub struct App {
     confirm_reset: bool,
     /// Learning-record backup: text typed or pasted on computers, and a backup waiting for "overwrite?".
     backup_input: String,
+    /// "Compare my voice" practice on the listen-and-repeat card.
+    rec: RecUi,
+    rec_key: usize,
     backup_pending: Option<Progress>,
     confirm_exit: bool,
     theme_applied: bool,
@@ -448,6 +461,8 @@ impl App {
             toast: None,
             confirm_reset: false,
             backup_input: String::new(),
+            rec: RecUi::Idle,
+            rec_key: usize::MAX,
             backup_pending: None,
             confirm_exit: false,
             theme_applied: false,
@@ -721,6 +736,12 @@ impl eframe::App for App {
             let band = if self.splash { Color32::from_rgb(38, 34, 112) } else { bg() };
             egui::Panel::top("ios_top").exact_size(top).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
             egui::Panel::bottom("ios_bottom").exact_size(bottom).show_separator_line(false).frame(egui::Frame::NONE.fill(bg())).show(ui, |_| {});
+        }
+        // the learner's own recording is thrown away as soon as the lesson is left
+        if self.run.is_none() && self.rec != RecUi::Idle {
+            notify::rec_clear();
+            self.rec = RecUi::Idle;
+            self.rec_key = usize::MAX;
         }
         if self.icon_mode {
             egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(Color32::from_rgb(20, 170, 150))).show(ui, |ui| {
@@ -1763,7 +1784,7 @@ impl App {
                 "태국어 음성은 AI 음성 합성(Google Cloud Chirp 3 HD)으로 만들었어요. 사람이 녹음한 것이 아니라서 발음이나 성조가 어색한 곳이 있을 수 있어요.",
                 "단어, 문장, 한글 발음, 성조 표시는 AI의 도움으로 만들었고 태국어 원어민의 검수가 아직 끝나지 않았어요. 틀린 곳을 발견하면 알려 주세요.",
                 "한글 발음은 근사치예요. 한글로는 태국어의 성조와 길이를 모두 나타낼 수 없어요.",
-                "이 앱은 카메라, 마이크, 위치 같은 권한을 쓰지 않아요(학습 알림을 켤 때만 알림 권한을 물어봐요). 학습 기록은 이 기기 안에만 저장돼요.",
+                "이 앱은 카메라, 위치 같은 권한을 쓰지 않아요. 학습 알림을 켤 때 알림 권한을, '내 소리 녹음'을 처음 누를 때 마이크 권한을 물어봐요. 녹음은 이 기기 안에 잠깐 저장되고 레슨을 나가면 지워지며, 어디로도 전송되지 않아요. 학습 기록은 이 기기 안에만 저장돼요.",
             ] {
                 ui.label(RichText::new(l).font(font(14.0)));
                 ui.add_space(4.0);
@@ -3054,7 +3075,7 @@ impl App {
             }
             Body::Flash { th, pron, tones, ko, shadow } => {
                 let big = if *shadow { 30.0 } else { 46.0 };
-                let height = if *shadow { 300.0 } else { 280.0 };
+                let height = if *shadow { if notify::rec_supported() { 245.0 } else { 300.0 } } else { 280.0 };
                 let (rect, resp) = ui.allocate_exact_size(vec2(w, height), if *shadow || locked { Sense::hover() } else { Sense::click() });
                 let back = run.st.flipped && !*shadow;
                 let p = ui.painter();
@@ -3094,7 +3115,55 @@ impl App {
                 }
                 if *shadow {
                     ui.add_space(14.0);
-                    ui.label(RichText::new("입 모양을 크게 하고, 들은 대로 소리 내어 읽어 보세요. 마이크 없이 스스로 체크해요.").font(font(13.5)).color(muted()));
+                    if notify::rec_supported() {
+                        // each card starts without a recording
+                        if self.rec_key != run.pos {
+                            if self.rec != RecUi::Idle {
+                                notify::rec_clear();
+                            }
+                            self.rec = RecUi::Idle;
+                            self.rec_key = run.pos;
+                        }
+                        if let RecUi::Recording(t0) = self.rec {
+                            if now - t0 > 12.0 {
+                                notify::rec_stop();
+                                self.rec = if notify::rec_has() { RecUi::Have } else { RecUi::Idle };
+                            }
+                        }
+                        ui.label(RichText::new("들은 대로 따라 말하고, 내 소리를 원어민 소리와 번갈아 들어 보세요. 채점은 하지 않아요.").font(font(13.5)).color(muted()));
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| match self.rec {
+                            RecUi::Idle => {
+                                if button3d(ui, "● 녹음하기", vec2(150.0, 46.0), RED, true).clicked() {
+                                    match notify::rec_start() {
+                                        notify::RecStart::Ok => self.rec = RecUi::Recording(now),
+                                        notify::RecStart::NeedPermission => self.toast("마이크 허용 후 다시 눌러 주세요", now),
+                                        _ => self.toast("녹음을 시작하지 못했어요", now),
+                                    }
+                                }
+                            }
+                            RecUi::Recording(t0) => {
+                                if button3d(ui, &format!("■ 멈추기 {:.0}초", now - t0), vec2(170.0, 46.0), RED, true).clicked() {
+                                    notify::rec_stop();
+                                    self.rec = if notify::rec_has() { RecUi::Have } else { RecUi::Idle };
+                                }
+                            }
+                            RecUi::Have => {
+                                if outline_button(ui, "▶ 내 소리", vec2(110.0, 46.0), BLUE).clicked() {
+                                    notify::rec_play();
+                                }
+                                if outline_button(ui, "▶ 원어민", vec2(110.0, 46.0), BLUE).clicked() {
+                                    self.audio.speak(th, false);
+                                }
+                                if outline_button(ui, "다시 녹음", vec2(110.0, 46.0), fg()).clicked() {
+                                    notify::rec_clear();
+                                    self.rec = RecUi::Idle;
+                                }
+                            }
+                        });
+                    } else {
+                        ui.label(RichText::new("입 모양을 크게 하고, 들은 대로 소리 내어 읽어 보세요. 스스로 체크해요.").font(font(13.5)).color(muted()));
+                    }
                 }
             }
             Body::Match { left, right, right_to_left } => {
