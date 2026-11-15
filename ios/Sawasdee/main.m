@@ -152,3 +152,14 @@ __attribute__((constructor)) static void sawasdee_notify_setup(void) {
     static SawasdeeNotifyDelegate *d; d = [SawasdeeNotifyDelegate new];
     [UNUserNotificationCenter currentNotificationCenter].delegate = d;
 }
+
+// ---- Clipboard (learning-record backup code) ----
+void sawasdee_clip_set(const char *text) {
+    [UIPasteboard generalPasteboard].string = [NSString stringWithUTF8String:text];
+}
+
+// Returns a malloc'ed UTF-8 copy of the clipboard text, or NULL. The caller frees it.
+char *sawasdee_clip_get(void) {
+    NSString *s = [UIPasteboard generalPasteboard].string;
+    return s ? strdup([s UTF8String]) : NULL;
+}

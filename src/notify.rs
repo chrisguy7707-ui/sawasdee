@@ -1,4 +1,5 @@
 //! Daily study reminder, one small interface over the phone's own notification system.
+//! Also the clipboard (for the learning-record backup code), which needs the same native hookup.
 //!
 //! * iPhone: UserNotifications, called through ios/Sawasdee/main.m.
 //! * Android: `Reminder.java` (alarms) and `ReminderReceiver.java`, called through JNI.
@@ -49,6 +50,16 @@ pub fn test() {
     imp::test(TITLE, MESSAGES[0]);
 }
 
+/// Copies text to the phone's clipboard. Returns false where there is no native clipboard (computers).
+pub fn clip_set(text: &str) -> bool {
+    imp::clip_set(text)
+}
+
+/// The phone's clipboard text, if any (computers: None).
+pub fn clip_get() -> Option<String> {
+    imp::clip_get()
+}
+
 // ------------------------------------------------------------------------- iPhone
 #[cfg(target_os = "ios")]
 mod imp {
@@ -60,6 +71,28 @@ mod imp {
         fn sawasdee_notify_schedule(minutes: i32, title: *const c_char, bodies: *const c_char, skip_today: i32);
         fn sawasdee_notify_cancel();
         fn sawasdee_notify_test(title: *const c_char, body: *const c_char);
+        fn sawasdee_clip_set(text: *const c_char);
+        fn sawasdee_clip_get() -> *mut c_char;
+        fn free(p: *mut std::os::raw::c_void);
+    }
+
+    pub fn clip_set(text: &str) -> bool {
+        let t = CString::new(text.replace('\0', "")).unwrap_or_default();
+        // SAFETY: NUL-terminated string that lives until the call returns.
+        unsafe { sawasdee_clip_set(t.as_ptr()) };
+        true
+    }
+    pub fn clip_get() -> Option<String> {
+        // SAFETY: main.m returns a malloc'ed C string (or null), freed here.
+        unsafe {
+            let p = sawasdee_clip_get();
+            if p.is_null() {
+                return None;
+            }
+            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+            free(p as *mut std::os::raw::c_void);
+            Some(s)
+        }
     }
 
     pub fn request_permission() {
@@ -98,6 +131,10 @@ mod imp {
     }
 
     fn with_env<R>(f: impl FnOnce(&mut JNIEnv, &JObject, &JClass) -> jni::errors::Result<R>) -> Option<R> {
+        with_class("com.sawasdee.thai.Reminder", f)
+    }
+
+    fn with_class<R>(class: &str, f: impl FnOnce(&mut JNIEnv, &JObject, &JClass) -> jni::errors::Result<R>) -> Option<R> {
         let &(vm, act) = CTX.get()?;
         // SAFETY: the pointers come from the running activity and stay valid for the whole process.
         let vm = unsafe { JavaVM::from_raw(vm as *mut _) }.ok()?;
@@ -106,7 +143,7 @@ mod imp {
         // A native thread only sees system classes; our Reminder class is found through the activity's class loader.
         let result = (|| {
             let loader = env.call_method(&activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
-            let name = env.new_string("com.sawasdee.thai.Reminder")?;
+            let name = env.new_string(class)?;
             let cls = env.call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[JValue::Object(&name)])?.l()?;
             let cls = JClass::from(cls);
             f(&mut env, &activity, &cls)
@@ -116,6 +153,22 @@ mod imp {
             let _ = env.exception_clear();
         }
         result.ok()
+    }
+
+    pub fn clip_set(text: &str) -> bool {
+        with_class("com.sawasdee.thai.Clip", |env, act, cls| {
+            let t = env.new_string(text)?;
+            env.call_static_method(cls, "set", "(Landroid/content/Context;Ljava/lang/String;)V", &[JValue::Object(act), JValue::Object(&t)])?;
+            Ok(())
+        })
+        .is_some()
+    }
+    pub fn clip_get() -> Option<String> {
+        with_class("com.sawasdee.thai.Clip", |env, act, cls| {
+            let o = env.call_static_method(cls, "get", "(Landroid/content/Context;)Ljava/lang/String;", &[JValue::Object(act)])?.l()?;
+            let s: String = env.get_string(&jni::objects::JString::from(o))?.into();
+            Ok(s)
+        })
     }
 
     pub fn request_permission() {
@@ -162,6 +215,12 @@ pub use imp::init as init_android;
 // ---------------------------------------------------------------------- computers
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod imp {
+    pub fn clip_set(_text: &str) -> bool {
+        false
+    }
+    pub fn clip_get() -> Option<String> {
+        None
+    }
     pub fn request_permission() {}
     pub fn schedule(_minutes: u32, _title: &str, _bodies: &str, _skip_today: bool) {}
     pub fn cancel() {}

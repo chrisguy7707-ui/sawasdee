@@ -25,6 +25,8 @@ const GRADUATE: u8 = 2;
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const STORE_KEY: &str = "progress_v1";
 
+const BACKUP_HEADER: &str = "SAWASDEE-BACKUP-1";
+
 fn today() -> i32 {
     chrono::Local::now().date_naive().num_days_from_ce()
 }
@@ -351,6 +353,9 @@ pub struct App {
     shot: Option<Shot>,
     toast: Option<(String, f64)>,
     confirm_reset: bool,
+    /// Learning-record backup: text typed or pasted on computers, and a backup waiting for "overwrite?".
+    backup_input: String,
+    backup_pending: Option<Progress>,
     confirm_exit: bool,
     theme_applied: bool,
     /// The opening (cover) screen, shown until the learner taps start.
@@ -442,6 +447,8 @@ impl App {
             shot: shot.map(|path| Shot { path, frames: 0, requested: false, done: Arc::new(AtomicBool::new(false)) }),
             toast: None,
             confirm_reset: false,
+            backup_input: String::new(),
+            backup_pending: None,
             confirm_exit: false,
             theme_applied: false,
             splash: false,
@@ -1615,6 +1622,17 @@ impl App {
     }
 
     /// Profile "정보" sections: learning summary, notice about AI voice and checking, licenses.
+    /// The backup text: a header line and the whole learning record.
+    fn backup_code(&self) -> String {
+        format!("{}\n{}", BACKUP_HEADER, ron::to_string(&self.p).unwrap_or_default())
+    }
+
+    fn parse_backup(text: &str) -> Result<Progress, String> {
+        let text = text.trim();
+        let body = text.strip_prefix(BACKUP_HEADER).ok_or("사왓디 백업 코드가 아니에요. 코드를 다시 복사해 주세요")?;
+        ron::from_str::<Progress>(body.trim()).map_err(|_| "백업 코드가 깨졌어요. 처음부터 끝까지 복사했는지 확인해 주세요".to_string())
+    }
+
     /// Books (or cancels) the daily reminders to match the saved settings.
     fn sync_reminder(&self) {
         if self.p.reminder_on {
@@ -1624,7 +1642,7 @@ impl App {
         }
     }
 
-    fn about_sections(&mut self, ui: &mut Ui, col_w: f32) {
+    fn about_sections(&mut self, ui: &mut Ui, col_w: f32, now: f64) {
         ui.label(RichText::new("정보").font(bold(21.0)));
         ui.add_space(4.0);
         egui::CollapsingHeader::new(RichText::new("학습 알림").font(bold(17.0))).default_open(true).show(ui, |ui| {
@@ -1662,6 +1680,51 @@ impl App {
             ui.label(RichText::new("정해 둔 시각 무렵에 알림이 한 번 와요(절전 때문에 최대 1시간 늦을 수 있어요). 그날 이미 공부했으면 쉬고, 앱을 7일 동안 열지 않으면 알림이 멈춰요. 알림이 오지 않으면 휴대폰 설정에서 알림을 허용해 주세요.").font(font(13.0)).color(muted()));
             if changed {
                 self.sync_reminder();
+            }
+        });
+        egui::CollapsingHeader::new(RichText::new("학습 기록 백업").font(bold(17.0))).show(ui, |ui| {
+            ui.set_width(col_w - 40.0);
+            ui.label(RichText::new("폰을 바꾸거나 앱을 다시 설치하기 전에 백업 코드를 복사해 메모 앱이나 메시지(나에게 보내기)에 붙여 두세요. 새 기기에서 코드를 복사한 뒤 '불러오기'를 누르면 기록이 돌아와요. 코드는 이 기기 밖으로 자동 전송되지 않아요.").font(font(13.5)).color(muted()));
+            ui.add_space(4.0);
+            if outline_button(ui, "백업 코드 복사", vec2(200.0, 44.0), fg()).clicked() {
+                let code = self.backup_code();
+                if !notify::clip_set(&code) {
+                    ui.ctx().copy_text(code);
+                }
+                self.toast("백업 코드를 복사했어요", now);
+            }
+            if !notify::supported() {
+                ui.add_space(4.0);
+                ui.label(RichText::new("불러오기: 코드를 아래 칸에 붙여 넣으세요.").font(font(13.5)).color(muted()));
+                ui.add(egui::TextEdit::multiline(&mut self.backup_input).desired_rows(3).desired_width(f32::INFINITY));
+            }
+            ui.add_space(4.0);
+            if outline_button(ui, if notify::supported() { "클립보드에서 불러오기" } else { "붙여 넣은 코드로 불러오기" }, vec2(260.0, 44.0), fg()).clicked() {
+                let text = if notify::supported() { notify::clip_get().unwrap_or_default() } else { self.backup_input.clone() };
+                match Self::parse_backup(&text) {
+                    Ok(p) => self.backup_pending = Some(p),
+                    Err(e) => self.toast(&e, now),
+                }
+            }
+            if let Some(p) = self.backup_pending.clone() {
+                ui.add_space(4.0);
+                let finished = p.done.iter().filter(|&&d| d as usize >= LESSONS_PER_UNIT).count();
+                ui.label(RichText::new(format!("이 백업: 끝낸 레슨 {}개, 끝낸 단원 {}개, 연속 {}일. 지금 기록을 이걸로 바꿀까요?", p.lessons_done, finished, p.streak)).font(font(14.0)).color(RED));
+                ui.horizontal(|ui| {
+                    if button3d(ui, "바꾸기", vec2(120.0, 44.0), RED, true).clicked() {
+                        let muted = self.p.muted;
+                        self.p = p;
+                        self.p.muted = muted;
+                        self.p.fix();
+                        self.backup_pending = None;
+                        self.backup_input.clear();
+                        self.sync_reminder();
+                        self.toast("학습 기록을 불러왔어요", now);
+                    }
+                    if outline_button(ui, "취소", vec2(120.0, 44.0), fg()).clicked() {
+                        self.backup_pending = None;
+                    }
+                });
             }
         });
         egui::CollapsingHeader::new(RichText::new("학습 요약").font(bold(17.0))).show(ui, |ui| {
@@ -2243,7 +2306,7 @@ impl App {
                         });
                     }
                     ui.add_space(14.0);
-                    self.about_sections(ui, col_w);
+                    self.about_sections(ui, col_w, now);
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("앱").font(bold(21.0)));
@@ -3246,3 +3309,32 @@ impl App {
 
 #[allow(dead_code)]
 fn unused(_: Vec2) {}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn backup_round_trip_keeps_progress() {
+        let mut app_p = Progress::default();
+        app_p.done[0] = 3;
+        app_p.xp_total = 123;
+        app_p.streak = 4;
+        app_p.reminder_on = true;
+        app_p.note_wrong(0, 2, false);
+        let code = format!("{}\n{}", BACKUP_HEADER, ron::to_string(&app_p).unwrap());
+        // pasted with surrounding blank lines, as chat apps tend to add
+        let back = App::parse_backup(&format!("\n{}\n\n", code)).expect("parse");
+        assert_eq!(back.done[0], 3);
+        assert_eq!(back.xp_total, 123);
+        assert_eq!(back.streak, 4);
+        assert!(back.reminder_on);
+        assert_eq!(back.notebook.len(), 1);
+    }
+
+    #[test]
+    fn bad_backup_is_refused() {
+        assert!(App::parse_backup("hello").is_err());
+        assert!(App::parse_backup("SAWASDEE-BACKUP-1\n(broken").is_err());
+    }
+}
