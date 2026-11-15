@@ -186,7 +186,7 @@ def check_pron_initials(rows):
 
 
 # Spellings whose real tone does not follow the rule; the expected tones come from the dictionary
-IRREGULAR = {"อร่อย": "LL", "ก็": "F"}
+IRREGULAR = {"อร่อย": "LL", "ก็": "F", "เหตุผล": "LR"}  # เหตุ (hèet): the analyzer cannot read this spelling; value from a dictionary
 
 
 def load_splits():
