@@ -545,6 +545,36 @@ impl App {
                     app.p.note_wrong(0, 6, false);
                     app.p.note_right(0, 1, false);
                 }
+                // test pictures of the alphabet quizzes: "q-<kind>" or "q-<kind>@<question number>"
+                q if q.starts_with("q-") => {
+                    let (name, at) = match q[2..].split_once('@') {
+                        Some((n, i)) => (n, i.parse::<usize>().unwrap_or(0)),
+                        None => (&q[2..], 0),
+                    };
+                    let kind = match name {
+                        "letters" => Some(LessonKind::Letters),
+                        "vowels" => Some(LessonKind::Vowels),
+                        "spelling" => Some(LessonKind::Spelling),
+                        "class" => Some(LessonKind::ConsonantClass),
+                        "tonerules" => Some(LessonKind::ToneRules),
+                        "finals" => Some(LessonKind::Finals),
+                        "reading" => Some(LessonKind::Reading),
+                        "sentence" => Some(LessonKind::SentenceReading),
+                        "signs" => Some(LessonKind::Signs),
+                        "digits" => Some(LessonKind::Digits),
+                        "practice" => Some(LessonKind::Practice),
+                        _ => None,
+                    };
+                    if let Some(kind) = kind {
+                        for u in 0..UNITS.len() {
+                            app.p.done[u] = 5;
+                        }
+                        app.start(kind, 0.0);
+                        if let Some(run) = app.run.as_mut() {
+                            run.pos = at.min(run.queue.len().saturating_sub(1));
+                        }
+                    }
+                }
                 "dialogue" => {
                     for u in 0..3 {
                         app.p.done[u] = 5;
@@ -2995,23 +3025,31 @@ impl App {
             }
             ui.add_space(20.0);
         } else if let Some(pr) = &ex.prompt_thai {
-            // a Thai word must never be split in the middle: shrink the font until it fits the bubble
-            let budget = (ui.available_width() - 215.0).max(80.0);
+            // On a phone the elephant leaves the bubble too little room, so it steps aside there.
+            // A Thai word must never be split in the middle: the font shrinks until it fits on one line.
+            let avail = ui.available_width();
+            let with_mascot = avail >= 520.0;
+            // a long sentence on a phone: the speaker button goes above the text, so the text gets the whole width
+            let stacked = !with_mascot && text_size(ui, &pr.th, bold(22.0)).x > avail - 112.0;
+            let budget = (avail - if with_mascot { 116.0 } else { 0.0 } - if stacked { 40.0 } else { 112.0 }).max(80.0);
             let mut th_size = 30.0f32;
-            while th_size > 16.0 && text_size(ui, &pr.th, bold(th_size)).x > budget {
+            while th_size > 15.0 && text_size(ui, &pr.th, bold(th_size)).x > budget {
                 th_size -= 1.0;
             }
             ui.horizontal(|ui| {
                 // mascot with speech bubble
-                let (mr, _) = ui.allocate_exact_size(vec2(110.0, 120.0), Sense::hover());
-                paint_mascot(ui.painter(), mr.center() + vec2(0.0, 6.0), 36.0, false);
-                ui.add_space(6.0);
+                if with_mascot {
+                    let (mr, _) = ui.allocate_exact_size(vec2(110.0, 120.0), Sense::hover());
+                    paint_mascot(ui.painter(), mr.center() + vec2(0.0, 6.0), 36.0, false);
+                    ui.add_space(6.0);
+                }
                 let frame = egui::Frame::NONE
                     .stroke(Stroke::new(2.0, border()))
                     .corner_radius(CornerRadius::same(16))
                     .inner_margin(Margin::symmetric(16, 12));
                 let resp = frame.show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    let layout = if stacked { Layout::top_down(Align::Min) } else { Layout::left_to_right(Align::Min) };
+                    ui.with_layout(layout, |ui| {
                         if speaker_button(ui, 44.0, BLUE).clicked() {
                             if let Some(t) = &ex.speak {
                                 self.audio.speak(t, false);
@@ -3019,7 +3057,7 @@ impl App {
                         }
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(&pr.th).font(bold(th_size)).color(fg()));
+                            ui.add(egui::Label::new(RichText::new(&pr.th).font(bold(th_size)).color(fg())).wrap_mode(if text_size(ui, &pr.th, bold(th_size)).x <= budget { egui::TextWrapMode::Extend } else { egui::TextWrapMode::Wrap }));
                             ui.label(RichText::new(&pr.pron).font(font(15.0)).color(muted()));
                             if !pr.tones.is_empty() {
                                 ui.label(RichText::new(format!("성조  {}", pr.tones)).font(bold(15.0)).color(TONE))
@@ -3029,25 +3067,33 @@ impl App {
                     });
                 });
                 // bubble tail
-                let r = resp.response.rect;
-                let tip = Pos2::new(r.left() - 12.0, r.center().y + 6.0);
-                let p = ui.painter();
-                p.add(egui::Shape::convex_polygon(vec![Pos2::new(r.left() + 1.0, r.center().y - 4.0), tip, Pos2::new(r.left() + 1.0, r.center().y + 14.0)], surface(), Stroke::NONE));
-                p.line_segment([Pos2::new(r.left(), r.center().y - 4.0), tip], Stroke::new(2.0, border()));
-                p.line_segment([tip, Pos2::new(r.left(), r.center().y + 14.0)], Stroke::new(2.0, border()));
+                if with_mascot {
+                    let r = resp.response.rect;
+                    let tip = Pos2::new(r.left() - 12.0, r.center().y + 6.0);
+                    let p = ui.painter();
+                    p.add(egui::Shape::convex_polygon(vec![Pos2::new(r.left() + 1.0, r.center().y - 4.0), tip, Pos2::new(r.left() + 1.0, r.center().y + 14.0)], surface(), Stroke::NONE));
+                    p.line_segment([Pos2::new(r.left(), r.center().y - 4.0), tip], Stroke::new(2.0, border()));
+                    p.line_segment([tip, Pos2::new(r.left(), r.center().y + 14.0)], Stroke::new(2.0, border()));
+                }
             });
             ui.add_space(18.0);
         } else if let Some(ko) = &ex.prompt_ko {
+            let avail = ui.available_width();
+            let with_mascot = avail >= 520.0;
+            let text_w = (avail - if with_mascot { 116.0 } else { 0.0 } - 40.0).max(120.0);
             ui.horizontal(|ui| {
-                let (mr, _) = ui.allocate_exact_size(vec2(110.0, 110.0), Sense::hover());
-                paint_mascot(ui.painter(), mr.center(), 34.0, false);
-                ui.add_space(6.0);
+                if with_mascot {
+                    let (mr, _) = ui.allocate_exact_size(vec2(110.0, 110.0), Sense::hover());
+                    paint_mascot(ui.painter(), mr.center(), 34.0, false);
+                    ui.add_space(6.0);
+                }
                 egui::Frame::NONE
                     .stroke(Stroke::new(2.0, border()))
                     .corner_radius(CornerRadius::same(16))
                     .inner_margin(Margin::symmetric(18, 14))
                     .show(ui, |ui| {
-                        ui.label(RichText::new(ko).font(bold(21.0)));
+                        ui.set_max_width(text_w);
+                        ui.add(egui::Label::new(RichText::new(ko).font(bold(21.0))).wrap());
                     });
             });
             ui.add_space(18.0);
