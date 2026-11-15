@@ -230,6 +230,8 @@ pub enum LessonKind {
     Signs,
     /// Alphabet tab: Thai digits.
     Digits,
+    /// Short conversation: pick the fitting reply.
+    Dialogue,
 }
 
 /// What the generator needs to know about the learner.
@@ -240,6 +242,8 @@ pub struct Ctx<'a> {
     pub focus: &'a [(usize, usize)],
     /// Mistake notebook entries, most needed first: (unit, word or sentence index, is_sentence).
     pub mistakes: &'a [(usize, usize, bool)],
+    /// Lessons finished per unit (dialogues use only what the learner has reached).
+    pub done: &'a [u8],
 }
 
 fn pick_options(rng: &mut Rng, u: usize, correct: usize, make: impl Fn(usize) -> Card) -> (Vec<Card>, usize) {
@@ -988,6 +992,50 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                 });
             }
         }
+        LessonKind::Dialogue => {
+            let mut open = crate::data::dialogues_open(ctx.done);
+            rng.shuffle(&mut open);
+            let replies: Vec<(String, String, String)> = crate::data::DIALOGUES
+                .iter()
+                .map(|&(_, _, ru, ri)| {
+                    let s = &UNITS[ru].sentences[ri];
+                    (sentence_thai(s, ctx.female), sentence_pron(s, ctx.female), sentence_tones(s, ctx.female))
+                })
+                .collect();
+            for &k in open.iter().take(8) {
+                let (au, ai, ru, ri) = crate::data::DIALOGUES[k];
+                let (a, r) = (&UNITS[au].sentences[ai], &UNITS[ru].sentences[ri]);
+                let right = replies[k].clone();
+                let mut wrong: Vec<(String, String, String)> = Vec::new();
+                let mut order: Vec<usize> = (0..replies.len()).collect();
+                rng.shuffle(&mut order);
+                for j in order {
+                    if replies[j].0 != right.0 && !wrong.iter().any(|w| w.0 == replies[j].0) {
+                        wrong.push(replies[j].clone());
+                    }
+                    if wrong.len() == 3 {
+                        break;
+                    }
+                }
+                let mut opts = vec![right.clone()];
+                opts.extend(wrong);
+                rng.shuffle(&mut opts);
+                let correct = opts.iter().position(|o| o.0 == right.0).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "대화",
+                    title: "상대가 이렇게 말했어요. 알맞은 대답은?".into(),
+                    prompt_thai: Some(Prompt { th: sentence_thai(a, ctx.female), pron: sentence_pron(a, ctx.female), tones: sentence_tones(a, ctx.female) }),
+                    prompt_ko: Some(a.korean()),
+                    speak: Some(sentence_thai(a, ctx.female)),
+                    listen_only: false,
+                    body: Body::Choice { options: opts.iter().map(|o| Card::thai(&o.0, &o.1, &o.2)).collect(), correct },
+                    solution: format!("{} · {} = {}", right.0, right.1, r.korean()),
+                    solution_speak: Some(right.0.clone()),
+                    words: vec![],
+                    sentence: Some((ru, ri)),
+                });
+            }
+        }
         LessonKind::Mistakes => {
             let cycle = [Kind::Thai, Kind::Meaning, Kind::Listen, Kind::Tone];
             let (mut wc, mut sc) = (0usize, 0usize);
@@ -1056,7 +1104,7 @@ pub fn selftest(check_audio: bool) -> Result<String, String> {
                 for tts in [false, true] {
                     for seed in 1..30u64 {
                         let mut rng = Rng::new(seed);
-                        let ctx = Ctx { tts, female, focus: &[], mistakes: &[] };
+                        let ctx = Ctx { tts, female, focus: &[], mistakes: &[], done: &[9; 64] };
                         for ex in build(LessonKind::Normal { unit: u, lesson }, &mut rng, &ctx) {
                             check_ex(&ex, female)?;
                             n += 1;
@@ -1070,13 +1118,13 @@ pub fn selftest(check_audio: bool) -> Result<String, String> {
     let focus: Vec<(usize, usize)> = vec![(2, 3), (0, 6), (4, 1), (5, 9), (1, 0), (3, 2)];
     for seed in 1..50u64 {
         let mut rng = Rng::new(seed);
-        for ex in build(LessonKind::Practice, &mut rng, &Ctx { tts: true, female: seed % 2 == 0, focus: &focus, mistakes: &[] }) {
+        for ex in build(LessonKind::Practice, &mut rng, &Ctx { tts: true, female: seed % 2 == 0, focus: &focus, mistakes: &[], done: &[9; 64] }) {
             check_ex(&ex, seed % 2 == 0)?;
             n += 1;
         }
-        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules, LessonKind::Finals, LessonKind::Reading, LessonKind::SentenceReading, LessonKind::Signs, LessonKind::Digits] {
+        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules, LessonKind::Finals, LessonKind::Reading, LessonKind::SentenceReading, LessonKind::Signs, LessonKind::Digits, LessonKind::Dialogue] {
             for focus_set in [&[][..], &focus[..]] {
-                let es = build(kind, &mut rng, &Ctx { tts: true, female: false, focus: focus_set, mistakes: &[] });
+                let es = build(kind, &mut rng, &Ctx { tts: true, female: false, focus: focus_set, mistakes: &[], done: &[9; 64] });
                 if es.len() < 8 {
                     return Err(format!("{kind:?} lesson too short: {}", es.len()));
                 }
@@ -1087,7 +1135,7 @@ pub fn selftest(check_audio: bool) -> Result<String, String> {
             }
         }
         let mistakes: Vec<(usize, usize, bool)> = vec![(0, 2, false), (3, 1, true), (6, 4, true), (11, 9, false), (9, 3, true), (1, 0, false)];
-        let ex = build(LessonKind::Mistakes, &mut rng, &Ctx { tts: seed % 3 == 0, female: seed % 2 == 0, focus: &[], mistakes: &mistakes });
+        let ex = build(LessonKind::Mistakes, &mut rng, &Ctx { tts: seed % 3 == 0, female: seed % 2 == 0, focus: &[], mistakes: &mistakes, done: &[9; 64] });
         if ex.len() != mistakes.len() {
             return Err("mistake review lost questions".into());
         }

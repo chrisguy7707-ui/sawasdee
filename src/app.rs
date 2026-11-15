@@ -507,6 +507,12 @@ impl App {
                     app.p.note_wrong(0, 6, false);
                     app.p.note_right(0, 1, false);
                 }
+                "dialogue" => {
+                    for u in 0..3 {
+                        app.p.done[u] = 5;
+                    }
+                    app.start(LessonKind::Dialogue, 0.0);
+                }
                 "lesson" | "tiles" | "match" | "feedback" | "tone" | "flash" | "flash-back" | "spell" | "fill" | "shadow" | "wrong" => {
                     app.start(if o == "fill" { LessonKind::Normal { unit: 1, lesson: 2 } } else { LessonKind::Normal { unit: 0, lesson: if o == "shadow" { 1 } else { 0 } } }, 0.0);
                     if let Some(run) = app.run.as_mut() {
@@ -572,7 +578,7 @@ impl App {
     fn build(&mut self, kind: LessonKind) -> Vec<Exercise> {
         let focus = self.p.review_order();
         let mistakes = self.p.notebook_order();
-        let ctx = lesson::Ctx { tts: self.audio.available(), female: self.p.female(), focus: &focus, mistakes: &mistakes };
+        let ctx = lesson::Ctx { tts: self.audio.available(), female: self.p.female(), focus: &focus, mistakes: &mistakes, done: &self.p.done };
         lesson::build(kind, &mut self.rng, &ctx)
     }
 
@@ -605,7 +611,7 @@ impl App {
     fn finish(&mut self, run: Run, now: f64) {
         let t = today();
         let (xp, practice, review) = match run.kind {
-            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules | LessonKind::Finals | LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs | LessonKind::Digits => (5 + run.first_right.min(5) as u32, true, false),
+            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules | LessonKind::Finals | LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs | LessonKind::Digits | LessonKind::Dialogue => (5 + run.first_right.min(5) as u32, true, false),
             LessonKind::Normal { lesson, .. } => {
                 let base = if lesson == LESSONS_PER_UNIT - 1 { 20 } else { 10 };
                 (base + if run.mistakes == 0 { 5 } else { 0 }, false, lesson == LESSONS_PER_UNIT - 1)
@@ -1159,6 +1165,19 @@ impl App {
                 let label = if due > 0 { "약한 단어 복습하기" } else { "그래도 연습하기" };
                 if button3d(ui, label, vec2(ui.available_width(), 44.0), BLUE, true).clicked() {
                     self.start(LessonKind::Practice, now);
+                }
+            });
+            ui.add_space(12.0);
+        }
+        // short conversations
+        if crate::data::dialogues_open(&self.p.done).len() >= 3 {
+            card_frame().show(ui, |ui| {
+                ui.set_width(w - 40.0);
+                ui.label(RichText::new("대화 연습").font(bold(18.0)));
+                ui.label(RichText::new("상대의 말을 듣고 알맞은 대답을 골라 보세요.").font(font(14.0)).color(muted()));
+                ui.add_space(4.0);
+                if button3d(ui, "대화 시작하기", vec2(ui.available_width(), 44.0), PRIMARY, true).clicked() {
+                    self.start(LessonKind::Dialogue, now);
                 }
             });
             ui.add_space(12.0);
@@ -2409,6 +2428,7 @@ impl App {
                     LessonKind::Finals => ("받침".to_string(), ORANGE),
                     LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs => ("읽기".to_string(), ORANGE),
                     LessonKind::Digits => ("숫자".to_string(), ORANGE),
+                    LessonKind::Dialogue => ("대화".to_string(), BLUE),
                     _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
                 };
                 paint_note(p, hc, 26.0, c);

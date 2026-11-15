@@ -1243,3 +1243,23 @@ pub static VOWELS: &[Vowel] = &[
     v("ไก / ใก", "아이", "ไป", "빠이"),
     v("เกา", "아오", "เขา", "카오"),
 ];
+
+/// Short two-line conversations made only of existing course sentences, so they need no new
+/// recordings: (unit of the first line, sentence of the first line, unit of the reply, sentence of the reply).
+pub const DIALOGUES: &[(usize, usize, usize, usize)] = &[
+    (0, 2, 0, 3), // 잘 지내세요? -> 잘 지내요 감사합니다
+    (0, 1, 0, 6), // 감사합니다 -> 괜찮아요
+    (0, 5, 0, 6), // 죄송합니다 -> 괜찮아요
+    (1, 1, 1, 0), // 이름이 뭐예요? -> 제 이름은 민준이에요
+    (1, 5, 1, 6), // 어디에서 왔어요? -> 저는 한국에서 왔어요
+    (1, 3, 1, 2), // 태국 사람인가요? -> 저는 한국 사람이에요
+    (2, 0, 2, 1), // 이거 얼마예요? -> 50 바트예요
+    (2, 5, 2, 1), // 가격이 얼마예요? -> 50 바트예요
+    (2, 1, 2, 4), // 50 바트예요 -> 너무 비싸요
+];
+
+/// Dialogues the learner can already do: both sentences come from units with at least two lessons done.
+pub fn dialogues_open(done: &[u8]) -> Vec<usize> {
+    let ok = |u: usize| done.get(u).copied().unwrap_or(0) >= 2;
+    (0..DIALOGUES.len()).filter(|&k| ok(DIALOGUES[k].0) && ok(DIALOGUES[k].2)).collect()
+}
