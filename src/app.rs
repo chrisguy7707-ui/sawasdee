@@ -692,7 +692,7 @@ impl eframe::App for App {
         // Phones: keep clear of the status bar (top) and the gesture bar (bottom).
         #[cfg(target_os = "android")]
         {
-            let band = if self.splash || !is_dark() { Color32::from_rgb(14, 120, 108) } else { bg() };
+            let band = if self.splash || !is_dark() { Color32::from_rgb(38, 34, 112) } else { bg() };
             egui::Panel::top("android_top").exact_size(38.0).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
             egui::Panel::bottom("android_bottom").exact_size(16.0).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
         }
@@ -700,7 +700,7 @@ impl eframe::App for App {
         #[cfg(target_os = "ios")]
         {
             let (top, bottom) = crate::safe_insets();
-            let band = if self.splash { Color32::from_rgb(14, 120, 108) } else { bg() };
+            let band = if self.splash { Color32::from_rgb(38, 34, 112) } else { bg() };
             egui::Panel::top("ios_top").exact_size(top).show_separator_line(false).frame(egui::Frame::NONE.fill(band)).show(ui, |_| {});
             egui::Panel::bottom("ios_bottom").exact_size(bottom).show_separator_line(false).frame(egui::Frame::NONE.fill(bg())).show(ui, |_| {});
         }
@@ -899,7 +899,7 @@ impl App {
         let t0 = *self.splash_t0.get_or_insert(now);
         let t = (now - t0) as f32;
         let mut go = false;
-        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(Color32::from_rgb(14, 120, 108))).show(ui, |ui| {
+        egui::CentralPanel::no_frame().frame(egui::Frame::NONE.fill(Color32::from_rgb(38, 34, 112))).show(ui, |ui| {
             let r = ui.max_rect();
             let p = ui.painter().clone();
             let p = &p;
