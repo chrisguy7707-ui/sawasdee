@@ -368,6 +368,9 @@ pub struct App {
     /// "Compare my voice" practice on the listen-and-repeat card.
     rec: RecUi,
     rec_key: usize,
+    /// Pitch shapes (semitones, 60 points) of the native clip and of the learner's recording.
+    rec_native: Vec<f32>,
+    rec_mine: Vec<f32>,
     backup_pending: Option<Progress>,
     confirm_exit: bool,
     theme_applied: bool,
@@ -463,6 +466,8 @@ impl App {
             backup_input: String::new(),
             rec: RecUi::Idle,
             rec_key: usize::MAX,
+            rec_native: Vec::new(),
+            rec_mine: Vec::new(),
             backup_pending: None,
             confirm_exit: false,
             theme_applied: false,
@@ -1648,6 +1653,27 @@ impl App {
     }
 
     /// Profile "정보" sections: learning summary, notice about AI voice and checking, licenses.
+    /// Reads the learner's recording and the native clip and works out their pitch shapes.
+    fn analyze_voice(&mut self, text: &str) {
+        self.rec_mine = notify::rec_path()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| crate::pitch::parse_wav(&b))
+            .map(|pcm| crate::pitch::shape(&pcm, 60))
+            .unwrap_or_default();
+        self.rec_native = crate::audio::clip_pcm(text).map(|pcm| crate::pitch::shape(&pcm, 60)).unwrap_or_default();
+    }
+
+    /// The learner stopped (or the time ran out): keep the recording if there is one and analyse it.
+    fn finish_recording(&mut self, text: &str) {
+        notify::rec_stop();
+        if notify::rec_has() {
+            self.rec = RecUi::Have;
+            self.analyze_voice(text);
+        } else {
+            self.rec = RecUi::Idle;
+        }
+    }
+
     /// The backup text: a header line and the whole learning record.
     fn backup_code(&self) -> String {
         format!("{}\n{}", BACKUP_HEADER, ron::to_string(&self.p).unwrap_or_default())
@@ -3075,7 +3101,7 @@ impl App {
             }
             Body::Flash { th, pron, tones, ko, shadow } => {
                 let big = if *shadow { 30.0 } else { 46.0 };
-                let height = if *shadow { if notify::rec_supported() { 245.0 } else { 300.0 } } else { 280.0 };
+                let height = if *shadow { if notify::rec_supported() { 190.0 } else { 300.0 } } else { 280.0 };
                 let (rect, resp) = ui.allocate_exact_size(vec2(w, height), if *shadow || locked { Sense::hover() } else { Sense::click() });
                 let back = run.st.flipped && !*shadow;
                 let p = ui.painter();
@@ -3090,7 +3116,7 @@ impl App {
                     p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, "눌러서 다시 뒤집기", font(13.0), muted());
                 } else {
                     let g = p.layout(th.clone(), bold(big), fg(), rect.width() - 40.0);
-                    let top = rect.top() + 70.0;
+                    let top = rect.top() + if *shadow && notify::rec_supported() { 60.0 } else { 70.0 };
                     p.galley(Pos2::new(cx - g.size().x / 2.0, top), g.clone(), fg());
                     let mut y = top + g.size().y + 14.0;
                     paint_pron(p, Pos2::new(cx, y + 8.0), true, pron, tones, 17.0);
@@ -3106,7 +3132,7 @@ impl App {
                     run.st.flipped = !run.st.flipped;
                 }
                 // speaker on the card
-                let sp = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 36.0), vec2(48.0, 52.0));
+                let sp = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + if *shadow && notify::rec_supported() { 34.0 } else { 36.0 }), vec2(48.0, 52.0));
                 if !back {
                     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(sp));
                     if speaker_button(&mut child, 44.0, BLUE).clicked() {
@@ -3114,7 +3140,7 @@ impl App {
                     }
                 }
                 if *shadow {
-                    ui.add_space(14.0);
+                    ui.add_space(if notify::rec_supported() { 8.0 } else { 14.0 });
                     if notify::rec_supported() {
                         // each card starts without a recording
                         if self.rec_key != run.pos {
@@ -3122,16 +3148,16 @@ impl App {
                                 notify::rec_clear();
                             }
                             self.rec = RecUi::Idle;
+                            self.rec_mine.clear();
+                            self.rec_native.clear();
                             self.rec_key = run.pos;
                         }
                         if let RecUi::Recording(t0) = self.rec {
                             if now - t0 > 12.0 {
-                                notify::rec_stop();
-                                self.rec = if notify::rec_has() { RecUi::Have } else { RecUi::Idle };
+                                self.finish_recording(th);
                             }
                         }
-                        ui.label(RichText::new("들은 대로 따라 말하고, 내 소리를 원어민 소리와 번갈아 들어 보세요. 채점은 하지 않아요.").font(font(13.5)).color(muted()));
-                        ui.add_space(6.0);
+                        ui.add_space(2.0);
                         ui.horizontal_wrapped(|ui| match self.rec {
                             RecUi::Idle => {
                                 if button3d(ui, "● 녹음하기", vec2(150.0, 46.0), RED, true).clicked() {
@@ -3144,8 +3170,7 @@ impl App {
                             }
                             RecUi::Recording(t0) => {
                                 if button3d(ui, &format!("■ 멈추기 {:.0}초", now - t0), vec2(170.0, 46.0), RED, true).clicked() {
-                                    notify::rec_stop();
-                                    self.rec = if notify::rec_has() { RecUi::Have } else { RecUi::Idle };
+                                    self.finish_recording(th);
                                 }
                             }
                             RecUi::Have => {
@@ -3158,9 +3183,17 @@ impl App {
                                 if outline_button(ui, "다시 녹음", vec2(110.0, 46.0), fg()).clicked() {
                                     notify::rec_clear();
                                     self.rec = RecUi::Idle;
+                                    self.rec_mine.clear();
                                 }
                             }
                         });
+                        if self.rec == RecUi::Have {
+                            ui.add_space(6.0);
+                            paint_pitch_compare(ui, &self.rec_native, &self.rec_mine);
+                        } else if matches!(self.rec, RecUi::Idle) {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("녹음한 소리의 높낮이를 원어민과 겹쳐 보여 드려요 (채점은 안 해요)").font(font(12.5)).color(muted()));
+                        }
                     } else {
                         ui.label(RichText::new("입 모양을 크게 하고, 들은 대로 소리 내어 읽어 보세요. 스스로 체크해요.").font(font(13.5)).color(muted()));
                     }
@@ -3419,4 +3452,40 @@ mod backup_tests {
         assert!(App::parse_backup("hello").is_err());
         assert!(App::parse_backup("SAWASDEE-BACKUP-1\n(broken").is_err());
     }
+}
+
+/// Draws the pitch shape of the native clip (blue) and of the learner's voice (orange) on one small graph.
+/// Both are in semitones around each speaker's own middle pitch, stretched to the same width, so the
+/// learner compares the up-and-down shape, not the voice height or speed. No verdict is given.
+fn paint_pitch_compare(ui: &mut Ui, native: &[f32], mine: &[f32]) {
+    let w = ui.available_width().min(560.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 56.0), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::same(14), surface());
+    p.rect_stroke(rect, CornerRadius::same(14), Stroke::new(1.2, border()), StrokeKind::Inside);
+    let plot = rect.shrink2(vec2(14.0, 16.0));
+    p.line_segment([Pos2::new(plot.left(), plot.center().y), Pos2::new(plot.right(), plot.center().y)], Stroke::new(1.0, border()));
+    if mine.is_empty() || native.is_empty() {
+        let g = p.layout("목소리의 높낮이를 잘 잡지 못했어요. 조금 더 크게, 조용한 곳에서 다시 해 보세요".to_string(), font(12.5), muted(), rect.width() - 28.0);
+        p.galley(rect.center() - g.size() / 2.0, g, muted());
+        return;
+    }
+    let range = 9.0f32; // semitones above and below the middle line
+    let line = |curve: &[f32], color: Color32| {
+        let pts: Vec<Pos2> = curve
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                let x = plot.left() + plot.width() * i as f32 / (curve.len() - 1) as f32;
+                let y = plot.center().y - (v.clamp(-range, range) / range) * (plot.height() / 2.0);
+                Pos2::new(x, y)
+            })
+            .collect();
+        p.add(egui::Shape::line(pts, Stroke::new(3.0, color)));
+    };
+    line(native, BLUE);
+    line(mine, ORANGE);
+    p.text(rect.left_top() + vec2(18.0, 3.0), Align2::LEFT_TOP, "● 원어민", font(11.0), BLUE);
+    p.text(rect.left_top() + vec2(84.0, 3.0), Align2::LEFT_TOP, "● 내 소리", font(11.0), ORANGE);
+    p.text(rect.right_top() + vec2(-18.0, 3.0), Align2::RIGHT_TOP, "위쪽 = 높은 소리", font(11.0), muted());
 }

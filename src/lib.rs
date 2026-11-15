@@ -4,6 +4,7 @@ pub mod data;
 pub mod kit;
 pub mod lesson;
 pub mod notify;
+pub mod pitch;
 
 use std::path::PathBuf;
 

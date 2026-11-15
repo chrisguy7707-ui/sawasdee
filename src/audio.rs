@@ -25,6 +25,17 @@ fn find_clip(text: &str) -> Option<&'static [u8]> {
     None
 }
 
+/// The bundled recording decoded to mono samples, for pitch analysis.
+pub fn clip_pcm(text: &str) -> Option<crate::pitch::Pcm> {
+    use rodio::Source;
+    let dec = rodio::Decoder::new(std::io::Cursor::new(find_clip(text)?)).ok()?;
+    let rate: u32 = dec.sample_rate().into();
+    let ch: usize = u16::from(dec.channels()) as usize;
+    let all: Vec<f32> = dec.collect();
+    let samples = if ch <= 1 { all } else { all.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect() };
+    Some(crate::pitch::Pcm { samples, rate })
+}
+
 /// Whether a bundled recording exists for this text.
 pub fn has_clip(text: &str) -> bool {
     find_clip(text).is_some()

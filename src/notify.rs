@@ -89,6 +89,10 @@ pub fn rec_has() -> bool {
 pub fn rec_clear() {
     imp::rec_clear();
 }
+/// Path of the learner's recording (16-bit mono WAV), if there is one.
+pub fn rec_path() -> Option<String> {
+    imp::rec_path()
+}
 
 // ------------------------------------------------------------------------- iPhone
 #[cfg(target_os = "ios")]
@@ -109,6 +113,20 @@ mod imp {
         fn sawasdee_rec_play();
         fn sawasdee_rec_has() -> i32;
         fn sawasdee_rec_clear();
+        fn sawasdee_rec_path() -> *mut c_char;
+    }
+
+    pub fn rec_path() -> Option<String> {
+        // SAFETY: main.m returns a malloc'ed C string (or null), freed here.
+        unsafe {
+            let p = sawasdee_rec_path();
+            if p.is_null() {
+                return None;
+            }
+            let s = std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+            free(p as *mut std::os::raw::c_void);
+            Some(s)
+        }
     }
 
     pub fn rec_start() -> super::RecStart {
@@ -235,6 +253,14 @@ mod imp {
     pub fn rec_has() -> bool {
         with_class("com.sawasdee.thai.Recorder", |env, _act, cls| Ok(env.call_static_method(cls, "hasRecording", "()Z", &[])?.z()?)).unwrap_or(false)
     }
+    pub fn rec_path() -> Option<String> {
+        with_class("com.sawasdee.thai.Recorder", |env, _act, cls| {
+            let o = env.call_static_method(cls, "path", "()Ljava/lang/String;", &[])?.l()?;
+            let s: String = env.get_string(&jni::objects::JString::from(o))?.into();
+            Ok(s)
+        })
+        .filter(|s| !s.is_empty())
+    }
     pub fn rec_clear() {
         with_class("com.sawasdee.thai.Recorder", |env, _act, cls| {
             env.call_static_method(cls, "clear", "()V", &[])?;
@@ -311,6 +337,9 @@ mod imp {
         false
     }
     pub fn rec_clear() {}
+    pub fn rec_path() -> Option<String> {
+        None
+    }
     pub fn clip_set(_text: &str) -> bool {
         false
     }

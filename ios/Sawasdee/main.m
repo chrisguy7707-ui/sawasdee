@@ -172,7 +172,7 @@ static AVAudioPlayer *gMyPlayer = nil;
 static BOOL gHasRecording = NO;
 
 static NSURL *sawasdee_rec_url(void) {
-    return [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"my_voice.m4a"]];
+    return [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"my_voice.wav"]];
 }
 
 static int sawasdee_mic_state(void) {   // 0 granted, 1 undetermined, 2 denied
@@ -206,8 +206,9 @@ int sawasdee_rec_start(void) {
     AVAudioSession *s = [AVAudioSession sharedInstance];
     [s setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker error:&err];
     [s setActive:YES error:&err];
-    NSDictionary *settings = @{AVFormatIDKey: @(kAudioFormatMPEG4AAC), AVSampleRateKey: @44100, AVNumberOfChannelsKey: @1,
-                               AVEncoderBitRateKey: @96000};
+    // 16-bit mono PCM so the app can read the samples and draw the pitch curve
+    NSDictionary *settings = @{AVFormatIDKey: @(kAudioFormatLinearPCM), AVSampleRateKey: @16000, AVNumberOfChannelsKey: @1,
+                               AVLinearPCMBitDepthKey: @16, AVLinearPCMIsFloatKey: @NO, AVLinearPCMIsBigEndianKey: @NO};
     gRecorder = [[AVAudioRecorder alloc] initWithURL:sawasdee_rec_url() settings:settings error:&err];
     if (!gRecorder || ![gRecorder record]) { gRecorder = nil; return 2; }
     gHasRecording = NO;
@@ -223,6 +224,11 @@ void sawasdee_rec_stop(void) {
 }
 
 int sawasdee_rec_has(void) { return gHasRecording ? 1 : 0; }
+
+// Returns a malloc'ed path of the recording, or NULL. The caller frees it.
+char *sawasdee_rec_path(void) {
+    return gHasRecording ? strdup([sawasdee_rec_url().path UTF8String]) : NULL;
+}
 
 void sawasdee_rec_play(void) {
     if (!gHasRecording) return;
