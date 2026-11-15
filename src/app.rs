@@ -1267,8 +1267,9 @@ impl App {
                 let unlocked = self.p.done[u] > 0 || current.map(|c| c.0 == u).unwrap_or(false) || u == 0;
                 let bc = if unlocked { color } else { faint() };
                 let p = ui.painter();
-                p.rect_filled(banner.translate(vec2(0.0, 4.0)), CornerRadius::same(16), darken(bc, 0.8));
-                p.rect_filled(banner, CornerRadius::same(16), bc);
+                soft_shadow(p, banner, CornerRadius::same(22), 1.2);
+                p.rect_filled(banner, CornerRadius::same(22), bc);
+                p.rect_filled(Rect::from_min_max(banner.min, Pos2::new(banner.max.x, banner.min.y + banner.height() * 0.5)), CornerRadius { nw: 22, ne: 22, sw: 0, se: 0 }, Color32::from_white_alpha(14));
                 paint_diamond_row(p, banner.left_bottom() + vec2(30.0, -9.0), (col_w / 22.0) as usize - 2, 22.0, 4.5, Color32::from_white_alpha(38));
                 p.text(banner.left_top() + vec2(22.0, 18.0), Align2::LEFT_TOP, format!("단원 {} · {}", u + 1, crate::data::level_name(u)), bold(14.0), Color32::from_white_alpha(225));
                 p.text(banner.left_top() + vec2(22.0, 38.0), Align2::LEFT_TOP, unit.title, bold(23.0), WHITE);
@@ -1313,7 +1314,8 @@ impl App {
                         let part: Vec<Pos2> = ring[30..].iter().chain(ring[..1].iter()).copied().collect();
                         p.add(egui::Shape::line(part, Stroke::new(5.0, color)));
                     }
-                    paint_diamond(p, c + vec2(0.0, 6.0), r + 3.0, edge);
+                    paint_diamond(p, c + vec2(0.0, 7.0), r + 4.0, Color32::from_rgba_unmultiplied(40, 44, 90, if is_dark() { 60 } else { 28 }));
+                    let _ = edge;
                     let fc = if resp.hovered() && state != 0 { lighten(face, 0.08) } else { face };
                     paint_diamond(p, c + vec2(0.0, lift), r + 3.0, fc);
                     let ic = c + vec2(0.0, lift);

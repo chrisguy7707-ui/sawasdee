@@ -29,27 +29,27 @@ fn pick(light: (u8, u8, u8), dark: (u8, u8, u8)) -> Color32 {
 }
 
 /// Window background.
-pub fn bg() -> Color32 { pick((250, 249, 245), (22, 25, 31)) }
+pub fn bg() -> Color32 { pick((245, 246, 251), (15, 17, 26)) }
 /// Cards, panels and lesson pages.
-pub fn surface() -> Color32 { pick((255, 255, 255), (32, 36, 44)) }
+pub fn surface() -> Color32 { pick((255, 255, 255), (27, 30, 42)) }
 /// Main text.
-pub fn fg() -> Color32 { pick((55, 60, 70), (230, 233, 238)) }
+pub fn fg() -> Color32 { pick((26, 30, 48), (232, 235, 245)) }
 /// Secondary text.
-pub fn muted() -> Color32 { pick((135, 140, 150), (150, 158, 172)) }
-pub fn border() -> Color32 { pick((226, 226, 222), (56, 62, 74)) }
-pub fn primary_soft() -> Color32 { pick((214, 244, 238), (20, 66, 61)) }
-pub fn green_soft() -> Color32 { pick((220, 246, 208), (30, 62, 34)) }
-pub fn red_soft() -> Color32 { pick((255, 226, 226), (80, 34, 38)) }
+pub fn muted() -> Color32 { pick((112, 120, 144), (146, 154, 178)) }
+pub fn border() -> Color32 { pick((228, 231, 242), (46, 51, 70)) }
+pub fn primary_soft() -> Color32 { pick((232, 231, 255), (40, 38, 88)) }
+pub fn green_soft() -> Color32 { pick((220, 248, 236), (18, 62, 48)) }
+pub fn red_soft() -> Color32 { pick((255, 228, 234), (82, 30, 44)) }
 /// Locked nodes, empty buttons.
-pub fn locked() -> Color32 { pick((222, 222, 218), (58, 64, 75)) }
+pub fn locked() -> Color32 { pick((226, 229, 240), (44, 49, 68)) }
 /// Hover background.
-pub fn hover() -> Color32 { pick((244, 244, 240), (42, 47, 57)) }
+pub fn hover() -> Color32 { pick((240, 241, 250), (36, 40, 58)) }
 /// Empty part of progress bars.
-pub fn track() -> Color32 { pick((229, 229, 225), (50, 56, 67)) }
+pub fn track() -> Color32 { pick((228, 231, 243), (42, 47, 66)) }
 /// Space left by a used word tile.
-pub fn ghost() -> Color32 { pick((236, 236, 232), (42, 47, 57)) }
+pub fn ghost() -> Color32 { pick((236, 238, 247), (34, 38, 54)) }
 /// Disabled text and icons.
-pub fn faint() -> Color32 { pick((190, 190, 185), (92, 99, 112)) }
+pub fn faint() -> Color32 { pick((178, 184, 205), (92, 100, 128)) }
 
 /// A readable text colour for an accent colour on its soft background.
 pub fn ink(c: Color32, f: f32) -> Color32 {
@@ -60,16 +60,28 @@ pub fn ink(c: Color32, f: f32) -> Color32 {
         darken(c, f)
     }
 }
-pub const PRIMARY: Color32 = Color32::from_rgb(20, 170, 150);
-pub const ORANGE: Color32 = Color32::from_rgb(255, 150, 40);
-pub const RED: Color32 = Color32::from_rgb(235, 80, 80);
-pub const GREEN: Color32 = Color32::from_rgb(70, 180, 60);
-pub const BLUE: Color32 = Color32::from_rgb(30, 150, 240);
-pub const GOLD: Color32 = Color32::from_rgb(255, 195, 0);
-pub const TONE: Color32 = Color32::from_rgb(235, 120, 30);
+pub const PRIMARY: Color32 = Color32::from_rgb(88, 80, 232);
+pub const ORANGE: Color32 = Color32::from_rgb(255, 140, 66);
+pub const RED: Color32 = Color32::from_rgb(244, 63, 94);
+pub const GREEN: Color32 = Color32::from_rgb(16, 185, 129);
+pub const BLUE: Color32 = Color32::from_rgb(14, 165, 233);
+pub const GOLD: Color32 = Color32::from_rgb(250, 190, 40);
+pub const TONE: Color32 = Color32::from_rgb(240, 112, 40);
 
+/// Unit colours from the course data, calmed down a little so the screens look modern, not toy-like.
 pub fn rgb(c: [u8; 3]) -> Color32 {
-    Color32::from_rgb(c[0], c[1], c[2])
+    let m = |v: u8, t: f32| (v as f32 * 0.82 + t * 0.18) as u8;
+    Color32::from_rgb(m(c[0], 95.0), m(c[1], 100.0), m(c[2], 150.0))
+}
+
+/// A soft, layered shadow under a rounded rectangle (instead of a hard 3D edge).
+pub fn soft_shadow(p: &Painter, rect: Rect, radius: CornerRadius, strength: f32) {
+    let a = if is_dark() { 70.0 } else { 26.0 } * strength;
+    for (i, grow) in [10.0f32, 6.0, 3.0].iter().enumerate() {
+        let r = Rect::from_min_max(rect.min + vec2(-grow * 0.3, 2.0), rect.max + vec2(grow * 0.3, grow * 0.9 + 2.0));
+        let alpha = (a * (0.35 + 0.3 * i as f32 / 2.0)) as u8;
+        p.rect_filled(r, CornerRadius::same(((radius.nw as f32) + grow * 0.5).min(255.0) as u8), Color32::from_rgba_unmultiplied(40, 44, 90, alpha / 3));
+    }
 }
 
 pub fn darken(c: Color32, f: f32) -> Color32 {
@@ -99,27 +111,29 @@ pub fn text_size(ui: &Ui, text: &str, f: FontId) -> Vec2 {
     ui.painter().layout_no_wrap(text.to_string(), f, fg()).size()
 }
 
-/// A chunky button with a darker bottom edge.
+/// A flat pill button with a soft shadow (name kept from the old 3D look).
 pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: bool) -> Response {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
-    let depth = 3.0;
     let pressed = enabled && resp.is_pointer_button_down_on();
-    let (face_c, edge_c, text_c) = if enabled {
-        let f = if resp.hovered() { lighten(fill, 0.08) } else { fill };
-        (f, darken(fill, 0.78), WHITE)
+    let (face_c, text_c) = if enabled {
+        (if resp.hovered() { lighten(fill, 0.08) } else { fill }, WHITE)
     } else {
-        (locked(), darken(locked(), 0.85), faint())
+        (locked(), faint())
     };
     let p = ui.painter();
-    let r = CornerRadius::same(((size.y - depth) / 2.0).clamp(12.0, 30.0) as u8);
-    p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max), r, edge_c);
-    let face = if pressed {
-        Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max)
-    } else {
-        Rect::from_min_max(rect.min, rect.max - vec2(0.0, depth))
-    };
+    let body = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
+    let r = CornerRadius::same((body.height() / 2.0).clamp(12.0, 30.0) as u8);
+    let face = if pressed { body.translate(vec2(0.0, 2.0)) } else { body };
+    if enabled && !pressed {
+        soft_shadow(p, face, r, 1.2);
+    }
     p.rect_filled(face, r, face_c);
+    if enabled {
+        // a faint top highlight gives the flat colour a little depth
+        let hl = Rect::from_min_max(face.min + vec2(14.0, 1.5), Pos2::new(face.max.x - 14.0, face.min.y + 3.0));
+        p.rect_filled(hl, CornerRadius::same(2), Color32::from_white_alpha(46));
+    }
     p.text(face.center(), Align2::CENTER_CENTER, text, bold(16.0), text_c);
     if enabled {
         resp.on_hover_cursor(CursorIcon::PointingHand)
@@ -128,21 +142,19 @@ pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: boo
     }
 }
 
-/// White button with grey outline.
+/// Surface-coloured button with a thin outline.
 pub fn outline_button(ui: &mut Ui, text: &str, size: Vec2, text_color: Color32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let depth = 3.0;
     let pressed = resp.is_pointer_button_down_on();
     let p = ui.painter();
-    let r = CornerRadius::same(((size.y - depth) / 2.0).clamp(12.0, 30.0) as u8);
-    p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max), r, border());
-    let face = if pressed {
-        Rect::from_min_max(rect.min + vec2(0.0, depth), rect.max)
-    } else {
-        Rect::from_min_max(rect.min, rect.max - vec2(0.0, depth))
-    };
+    let body = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
+    let r = CornerRadius::same((body.height() / 2.0).clamp(12.0, 30.0) as u8);
+    let face = if pressed { body.translate(vec2(0.0, 2.0)) } else { body };
+    if !pressed {
+        soft_shadow(p, face, r, 0.7);
+    }
     p.rect_filled(face, r, if resp.hovered() { hover() } else { surface() });
-    p.rect_stroke(face, r, Stroke::new(2.0, border()), StrokeKind::Inside);
+    p.rect_stroke(face, r, Stroke::new(1.5, border()), StrokeKind::Inside);
     p.text(face.center(), Align2::CENTER_CENTER, text, bold(15.0), text_color);
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
@@ -176,12 +188,14 @@ fn paint_card_frame(p: &Painter, rect: Rect, look: Look, hovered: bool, radius: 
         p.rect_filled(rect, r, fill);
         return;
     }
-    let edge = Rect::from_min_max(rect.min + vec2(0.0, 3.0), rect.max);
-    p.rect_filled(edge, r, border);
     let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
     let fill = if hovered && look == Look::Normal { hover() } else { fill };
+    if matches!(look, Look::Normal | Look::Selected) {
+        soft_shadow(p, face, r, if look == Look::Selected { 1.0 } else { 0.6 });
+    }
     p.rect_filled(face, r, fill);
-    p.rect_stroke(face, r, Stroke::new(2.0, border), StrokeKind::Inside);
+    let w = if look == Look::Normal { 1.2 } else { 2.0 };
+    p.rect_stroke(face, r, Stroke::new(w, border), StrokeKind::Inside);
 }
 
 /// A big answer card used by choice exercises.
@@ -392,16 +406,15 @@ pub fn paint_speaker(p: &Painter, c: Pos2, s: f32, color: Color32) {
 pub fn speaker_button(ui: &mut Ui, size: f32, color: Color32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(size, size + 4.0), Sense::click());
     let p = ui.painter();
-    let r = CornerRadius::same((size * 0.22) as u8);
-    p.rect_filled(Rect::from_min_max(rect.min + vec2(0.0, 4.0), rect.max), r, darken(color, 0.78));
+    let r = CornerRadius::same((size * 0.5) as u8);
     let pressed = resp.is_pointer_button_down_on();
-    let face = if pressed {
-        Rect::from_min_max(rect.min + vec2(0.0, 4.0), rect.max)
-    } else {
-        Rect::from_min_max(rect.min, rect.max - vec2(0.0, 4.0))
-    };
+    let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 4.0));
+    let face = if pressed { face.translate(vec2(0.0, 2.0)) } else { face };
+    if !pressed {
+        soft_shadow(p, face, r, 1.0);
+    }
     p.rect_filled(face, r, if resp.hovered() { lighten(color, 0.1) } else { color });
-    paint_speaker(p, face.center(), size * 0.55, WHITE);
+    paint_speaker(p, face.center(), size * 0.5, WHITE);
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
