@@ -1235,6 +1235,9 @@ pub fn dump_content() -> String {
             line(["문장", &unit_name, &(i + 1).to_string(), &sentence_thai(s, false), &sentence_thai(s, true), &sentence_pron(s, false), &tones, &s.korean(), ""]);
         }
     }
+    for (th, pron, tone) in EXTRA_TOKENS {
+        line(["보조 단어", "문장에만 나옴", "", th, "", pron, &format!("{} {}", tone, tone_marks(tone)), "", ""]);
+    }
     for c in CONSONANTS.iter().chain(CONSONANTS_MORE.iter()) {
         line(["자음", "알파벳", c.letter, c.name, "", c.name_pron, class_name(c.class), &format!("{} · {}", c.sound, c.meaning), ""]);
     }

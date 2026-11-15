@@ -30,7 +30,7 @@ def cls_of(c):
 
 
 def tone_of(word):
-    s = word
+    s = word.replace("เสร็", "เส็")  # สร is read as a plain ส
     # silent letters: a letter followed by the silencer mark
     out = []
     i = 0
@@ -56,7 +56,7 @@ def tone_of(word):
         cls, s = "high", s[2:]
     elif len(s) > 2 and s[0] == "อ" and s[1] == "ย":
         cls, s = "mid", s[2:]
-    elif len(s) > 2 and s[0] in CLUSTER_FIRST and s[1] in CLUSTER_SECOND and (s[2] in VOWEL_CHARS or lead):
+    elif len(s) > 2 and s[0] in CLUSTER_FIRST and s[1] in CLUSTER_SECOND and (s[2] in VOWEL_CHARS or lead or len(s) == 3):
         cls, s = cls_of(s[0]), s[2:]
     else:
         cls, s = cls_of(s[0]), s[1:]
@@ -164,7 +164,8 @@ def hangul_initial(pron):
 
 def first_letter(word):
     s = word.lstrip("เแโไใ")
-    if len(s) > 2 and s[0] == "ห" and s[1] in SONORANT:
+    had_lead = len(s) < len(word)
+    if s[:1] == "ห" and len(s) > 1 and s[1] in SONORANT and (len(s) > 2 or had_lead):
         return s[1]
     if len(s) > 2 and s[0] == "อ" and s[1] == "ย":
         return "ย"
@@ -174,7 +175,7 @@ def first_letter(word):
 def check_pron_initials(rows):
     bad = []
     for r in rows:
-        if r[0] != "단어" or not r[5]:
+        if r[0] not in ("단어", "보조 단어") or not r[5]:
             continue
         letter = first_letter(r[3])
         want = INITIAL.get(letter)
@@ -184,6 +185,50 @@ def check_pron_initials(rows):
     return bad
 
 
+# Spellings whose real tone does not follow the rule; the expected tones come from the dictionary
+IRREGULAR = {"อร่อย": "LL", "ก็": "F"}
+
+
+def load_splits():
+    splits = {}
+    path = os.path.join(HERE, "syllable_splits.txt")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                word, pieces = [x.strip() for x in line.split("=", 1)]
+                splits[word] = pieces.split("-")
+    return splits
+
+
+def check_multi(rows):
+    splits = load_splits()
+    bad, missing, ok = [], [], 0
+    for r in rows:
+        if r[0] not in ("단어", "보조 단어"):
+            continue
+        parts = r[6].split()
+        if not parts:
+            continue
+        th, code = r[3], parts[0]
+        if len(code) < 2:
+            continue
+        pieces = splits.get(th)
+        if not pieces:
+            missing.append(th)
+            continue
+        got = "".join(tone_of(p) or "?" for p in pieces)
+        if th in IRREGULAR:
+            got = IRREGULAR[th]
+        if len(pieces) != len(code):
+            bad.append((r[1], th, r[5], code, f"split has {len(pieces)} syllables"))
+        elif got != code:
+            bad.append((r[1], th, r[5], code, got))
+        else:
+            ok += 1
+    return ok, bad, missing
+
+
 def main():
     if not os.path.exists(BIN):
         sys.exit("Run `cargo build` first.")
@@ -191,9 +236,12 @@ def main():
     checked = skipped = 0
     bad = []
     for r in rows:
-        if r[0] != "단어":
+        if r[0] not in ("단어", "보조 단어"):
             continue
-        th, code = r[3], r[6].split()[0]
+        parts = r[6].split()
+        if not parts:
+            continue  # words without a tone code (names)
+        th, code = r[3], parts[0]
         if len(code) != 1:
             continue
         got = tone_of(th)
@@ -208,14 +256,26 @@ def main():
         print(f"{len(pb)} Hangul spellings start with an unexpected sound:")
         for unit, th, pron, want, got in pb:
             print(f"  {th:<10} {pron:<8} expected {want}  found {got}   [{unit}]")
-    print(f"checked {checked} one-syllable words, skipped {skipped} (spelling not recognised)")
+    ok, mbad, missing = check_multi(rows)
+    print(f"one-syllable: checked {checked}, skipped {skipped} (spelling not recognised)")
+    print(f"multi-syllable: {ok} match")
+    if missing:
+        print(f"no syllable split for: {' '.join(missing)}")
+    failed = False
     if bad:
-        print(f"{len(bad)} differ (written code vs rule):")
+        failed = True
+        print(f"{len(bad)} one-syllable words differ (written code vs rule):")
         for unit, th, pron, code, got in bad:
             print(f"  {th:<10} {pron:<8} written {code}  rule {got}   [{unit}]")
-        sys.exit(1)
-    print("all tone codes match" + ("" if not pb else "; fix the Hangul spellings above"))
+    if mbad:
+        failed = True
+        print(f"{len(mbad)} multi-syllable words differ (written code vs rule):")
+        for unit, th, pron, code, got in mbad:
+            print(f"  {th:<12} {pron:<8} written {code}  rule {got}   [{unit}]")
     if pb:
+        failed = True
+    print("all tone codes match" if not (bad or mbad) else "tone codes differ: see above")
+    if failed or missing:
         sys.exit(1)
 
 
