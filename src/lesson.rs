@@ -224,6 +224,12 @@ pub enum LessonKind {
     Finals,
     /// Alphabet tab: read a Thai word without any help.
     Reading,
+    /// Alphabet tab: read a whole sentence and pick its meaning.
+    SentenceReading,
+    /// Alphabet tab: read a sign.
+    Signs,
+    /// Alphabet tab: Thai digits.
+    Digits,
 }
 
 /// What the generator needs to know about the learner.
@@ -873,6 +879,115 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                 });
             }
         }
+        LessonKind::Digits => {
+            let n = crate::data::DIGITS.len();
+            let mut idx: Vec<usize> = (0..n).collect();
+            rng.shuffle(&mut idx);
+            for &i in idx.iter().take(10) {
+                let d = &crate::data::DIGITS[i];
+                let mut others: Vec<usize> = (0..n).filter(|&j| j != i).collect();
+                rng.shuffle(&mut others);
+                let mut opts: Vec<usize> = vec![i];
+                opts.extend(others.into_iter().take(3));
+                rng.shuffle(&mut opts);
+                let correct = opts.iter().position(|&j| j == i).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "태국 숫자",
+                    title: "이 숫자는 얼마일까요?".into(),
+                    prompt_thai: Some(Prompt { th: d.glyph.to_string(), pron: String::new(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: None,
+                    listen_only: false,
+                    body: Body::Choice { options: opts.iter().map(|&j| Card::ko(crate::data::DIGITS[j].arabic)).collect(), correct },
+                    solution: format!("{} = {} · {} ({})", d.glyph, d.arabic, d.name, d.pron),
+                    solution_speak: Some(d.name.to_string()),
+                    words: vec![],
+                    sentence: None,
+                });
+            }
+        }
+        LessonKind::Signs => {
+            let n = crate::data::SIGNS.len();
+            let mut idx: Vec<usize> = (0..n).collect();
+            rng.shuffle(&mut idx);
+            for &i in idx.iter().take(10) {
+                let sg = &crate::data::SIGNS[i];
+                let mut others: Vec<usize> = (0..n).filter(|&j| j != i && crate::data::SIGNS[j].ko != sg.ko).collect();
+                rng.shuffle(&mut others);
+                let mut opts: Vec<usize> = vec![i];
+                opts.extend(others.into_iter().take(3));
+                rng.shuffle(&mut opts);
+                let correct = opts.iter().position(|&j| j == i).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "표지판",
+                    title: "이 표지판은 무슨 뜻일까요?".into(),
+                    prompt_thai: Some(Prompt { th: sg.th.to_string(), pron: String::new(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: None,
+                    listen_only: false,
+                    body: Body::Choice { options: opts.iter().map(|&j| Card::ko(crate::data::SIGNS[j].ko)).collect(), correct },
+                    solution: format!("{} ({}) = {}", sg.th, sg.pron, sg.ko),
+                    solution_speak: Some(sg.th.to_string()),
+                    words: vec![],
+                    sentence: None,
+                });
+            }
+        }
+        LessonKind::SentenceReading => {
+            // Sentences from the units the learner has reached; at the start, the first units.
+            let mut units: Vec<usize> = ctx.focus.iter().map(|&(u, _)| u).collect();
+            units.sort_unstable();
+            units.dedup();
+            for u in 0..UNITS.len().min(4) {
+                if !units.contains(&u) {
+                    units.push(u);
+                }
+            }
+            let mut pool: Vec<(usize, usize)> = Vec::new();
+            for &u in &units {
+                for i in 0..UNITS[u].sentences.len() {
+                    // Skip one-word sentences and sentences with a Korean meaning shared by another.
+                    if UNITS[u].sentences[i].th.len() >= 2 {
+                        pool.push((u, i));
+                    }
+                }
+            }
+            rng.shuffle(&mut pool);
+            let meanings: Vec<String> = pool.iter().map(|&(u, i)| UNITS[u].sentences[i].korean()).collect();
+            for (k, &(u, i)) in pool.iter().take(10).enumerate() {
+                let sent = &UNITS[u].sentences[i];
+                let right = meanings[k].clone();
+                let mut wrong: Vec<String> = Vec::new();
+                for m in meanings.iter().skip(10).chain(meanings.iter().take(10)) {
+                    if *m != right && !wrong.contains(m) {
+                        wrong.push(m.clone());
+                    }
+                    if wrong.len() == 3 {
+                        break;
+                    }
+                }
+                if wrong.len() < 3 {
+                    continue;
+                }
+                let mut opts: Vec<String> = vec![right.clone()];
+                opts.extend(wrong);
+                rng.shuffle(&mut opts);
+                let correct = opts.iter().position(|o| *o == right).unwrap_or(0);
+                out.push(Exercise {
+                    badge: "문장 읽기",
+                    title: "이 문장은 무슨 뜻일까요?".into(),
+                    prompt_thai: Some(Prompt { th: sentence_thai(sent, ctx.female), pron: String::new(), tones: String::new() }),
+                    prompt_ko: None,
+                    speak: None,
+                    listen_only: false,
+                    body: Body::Choice { options: opts.iter().map(|o| Card::ko(o)).collect(), correct },
+                    solution: format!("{} = {} · {}", sentence_thai(sent, ctx.female), sentence_pron(sent, ctx.female), right),
+                    solution_speak: Some(sentence_thai(sent, ctx.female)),
+                    words: vec![],
+                    sentence: Some((u, i)),
+                });
+            }
+        }
         LessonKind::Mistakes => {
             let cycle = [Kind::Thai, Kind::Meaning, Kind::Listen, Kind::Tone];
             let (mut wc, mut sc) = (0usize, 0usize);
@@ -959,7 +1074,7 @@ pub fn selftest(check_audio: bool) -> Result<String, String> {
             check_ex(&ex, seed % 2 == 0)?;
             n += 1;
         }
-        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules, LessonKind::Finals, LessonKind::Reading] {
+        for kind in [LessonKind::Letters, LessonKind::Vowels, LessonKind::Spelling, LessonKind::ConsonantClass, LessonKind::ToneRules, LessonKind::Finals, LessonKind::Reading, LessonKind::SentenceReading, LessonKind::Signs, LessonKind::Digits] {
             for focus_set in [&[][..], &focus[..]] {
                 let es = build(kind, &mut rng, &Ctx { tts: true, female: false, focus: focus_set, mistakes: &[] });
                 if es.len() < 8 {
@@ -1077,6 +1192,20 @@ pub fn all_speech() -> Vec<String> {
     for r in crate::data::TONE_RULES {
         add(r.example.to_string());
     }
+    for d in crate::data::DIGITS {
+        add(d.name.to_string());
+    }
+    for sg in crate::data::SIGNS {
+        add(sg.th.to_string());
+    }
+    for sp in crate::data::SPECIALS {
+        for (th, _, _) in sp.examples {
+            add(th.to_string());
+        }
+    }
+    for f in crate::data::FINALS {
+        add(f.example.to_string());
+    }
     for v in crate::data::VOWELS {
         add(v.example.to_string());
     }
@@ -1117,6 +1246,17 @@ pub fn dump_content() -> String {
     }
     for t in TONES {
         line(["성조", "알파벳", &t.code.to_string(), t.example, "", t.example_pron, t.mark, &format!("{} · {} · {}", t.name, t.how, t.example_ko), ""]);
+    }
+    for d in crate::data::DIGITS {
+        line(["숫자", "알파벳", d.glyph, d.name, "", d.pron, "", d.ko, ""]);
+    }
+    for sg in crate::data::SIGNS {
+        line(["표지판", "알파벳", "", sg.th, "", sg.pron, "", sg.ko, ""]);
+    }
+    for sp in crate::data::SPECIALS {
+        for (th, pr, ko) in sp.examples {
+            line(["특수 표기", sp.title, "", th, "", pr, "", ko, ""]);
+        }
     }
     for r in TONE_RULES {
         line(["성조 규칙", "알파벳", class_name(r.class), r.example, "", r.example_pron, &r.tone.to_string(), &format!("{} · {}", r.when, r.example_ko), ""]);

@@ -1091,6 +1091,88 @@ pub fn final_index(letter: &str) -> Option<usize> {
     FINALS.iter().position(|f| f.letters.split_whitespace().any(|l| l == letter))
 }
 
+/// Thai digits.
+pub struct Digit {
+    pub glyph: &'static str,
+    pub arabic: &'static str,
+    pub name: &'static str,
+    pub pron: &'static str,
+    pub ko: &'static str,
+}
+
+pub static DIGITS: &[Digit] = &[
+    Digit { glyph: "๐", arabic: "0", name: "ศูนย์", pron: "쑨", ko: "0 (영)" },
+    Digit { glyph: "๑", arabic: "1", name: "หนึ่ง", pron: "능", ko: "1 (하나)" },
+    Digit { glyph: "๒", arabic: "2", name: "สอง", pron: "썽", ko: "2 (둘)" },
+    Digit { glyph: "๓", arabic: "3", name: "สาม", pron: "쌈", ko: "3 (셋)" },
+    Digit { glyph: "๔", arabic: "4", name: "สี่", pron: "씨", ko: "4 (넷)" },
+    Digit { glyph: "๕", arabic: "5", name: "ห้า", pron: "하", ko: "5 (다섯)" },
+    Digit { glyph: "๖", arabic: "6", name: "หก", pron: "혹", ko: "6 (여섯)" },
+    Digit { glyph: "๗", arabic: "7", name: "เจ็ด", pron: "쩻", ko: "7 (일곱)" },
+    Digit { glyph: "๘", arabic: "8", name: "แปด", pron: "뺏", ko: "8 (여덟)" },
+    Digit { glyph: "๙", arabic: "9", name: "เก้า", pron: "까오", ko: "9 (아홉)" },
+];
+
+/// Signs a traveller sees, for reading practice.
+pub struct Sign {
+    pub th: &'static str,
+    pub pron: &'static str,
+    pub ko: &'static str,
+}
+
+pub static SIGNS: &[Sign] = &[
+    Sign { th: "ทางเข้า", pron: "탕카오", ko: "입구" },
+    Sign { th: "ทางออก", pron: "탕억", ko: "출구" },
+    Sign { th: "ห้ามเข้า", pron: "함카오", ko: "출입 금지" },
+    Sign { th: "ห้องน้ำชาย", pron: "헝남차이", ko: "남자 화장실" },
+    Sign { th: "ห้องน้ำหญิง", pron: "헝남잉", ko: "여자 화장실" },
+    Sign { th: "เปิด", pron: "쁘엇", ko: "영업 중 (열림)" },
+    Sign { th: "ปิด", pron: "삣", ko: "영업 종료 (닫힘)" },
+    Sign { th: "ลดราคา", pron: "롯라카", ko: "할인" },
+    Sign { th: "ระวัง", pron: "라왕", ko: "조심" },
+    Sign { th: "อันตราย", pron: "안따라이", ko: "위험" },
+    Sign { th: "ฉุกเฉิน", pron: "축천", ko: "응급" },
+    Sign { th: "ที่จอดรถ", pron: "티쩟롯", ko: "주차장" },
+    Sign { th: "ห้ามจอด", pron: "함쩟", ko: "주차 금지" },
+    Sign { th: "ห้ามถ่ายรูป", pron: "함타이룹", ko: "사진 촬영 금지" },
+];
+
+/// Special spellings: letter clusters, silent letters and signs.
+pub struct Special {
+    pub title: &'static str,
+    pub desc: &'static str,
+    /// (Thai, Hangul pronunciation, Korean meaning)
+    pub examples: &'static [(&'static str, &'static str, &'static str)],
+}
+
+pub static SPECIALS: &[Special] = &[
+    Special {
+        title: "이중 자음",
+        desc: "자음 두 개가 붙어서 한 번에 소리 나요. 앞 글자는 ก ข ค ต ป พ, 뒤 글자는 ร ล ว인 경우가 많아요. 둘 다 또박또박 이어서 읽어요.",
+        examples: &[("ปลา", "쁠라", "생선 (ปล)"), ("ครับ", "크랍", "남성 존댓말 (คร)"), ("ขวา", "콰", "오른쪽 (ขว)"), ("กลับ", "끌랍", "돌아가다 (กล)"), ("กรุงเทพ", "끄룽텝", "방콕 (กร)")],
+    },
+    Special {
+        title: "ห 가 앞에 오면",
+        desc: "ห는 소리 나지 않고, 뒤의 저자음(ง ญ น ม ย ร ล ว)을 고자음처럼 읽게 만들어요. 성조가 달라져요.",
+        examples: &[("หมู", "무", "돼지고기 (상승)"), ("ไหม", "마이", "~나요? (상승)"), ("ใหม่", "마이", "새로운 (저성)")],
+    },
+    Special {
+        title: "อ 가 앞에 오면 (ย 앞)",
+        desc: "อยาก อย่า อยู่ อย่าง 네 단어에서만 อ가 소리 나지 않고, ย를 중자음처럼 읽어요.",
+        examples: &[("อยาก", "약", "~하고 싶다"), ("อย่า", "야", "~하지 마라"), ("อยู่", "유", "있다")],
+    },
+    Special {
+        title: "읽지 않는 글자 ( ์ )",
+        desc: "글자 위에 ์ 가 붙으면 그 글자는 읽지 않아요. 외국어에서 온 단어에 많아요.",
+        examples: &[("ไลน์", "라인", "라인 (메신저)"), ("เช็คเอาท์", "첵아웃", "체크아웃"), ("โพสต์", "폿", "게시하다"), ("ไกด์", "까이", "가이드")],
+    },
+    Special {
+        title: "반복 부호 ( ๆ )",
+        desc: "ๆ 는 바로 앞 단어를 한 번 더 읽으라는 표시예요. 같은 말을 되풀이해 뜻을 부드럽게 하거나 강조해요.",
+        examples: &[("เร็วๆ", "레우레우", "빨리빨리 (เร็ว + เร็ว)")],
+    },
+];
+
 /// How a consonant class, the syllable ending and the tone mark decide the tone.
 pub struct ToneRule {
     /// 0 mid, 1 high, 2 low consonant class.

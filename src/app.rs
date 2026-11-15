@@ -482,6 +482,14 @@ impl App {
                     app.tab = Tab::Letters;
                     app.letters_page = 5;
                 }
+                "specials" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 6;
+                }
+                "digits" => {
+                    app.tab = Tab::Letters;
+                    app.letters_page = 7;
+                }
                 "words" => app.tab = Tab::Words,
                 "profile" => app.tab = Tab::Profile,
                 "notebook" => {
@@ -587,7 +595,7 @@ impl App {
     fn finish(&mut self, run: Run, now: f64) {
         let t = today();
         let (xp, practice, review) = match run.kind {
-            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules | LessonKind::Finals | LessonKind::Reading => (5 + run.first_right.min(5) as u32, true, false),
+            LessonKind::Practice | LessonKind::Mistakes | LessonKind::Letters | LessonKind::Vowels | LessonKind::Spelling | LessonKind::ConsonantClass | LessonKind::ToneRules | LessonKind::Finals | LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs | LessonKind::Digits => (5 + run.first_right.min(5) as u32, true, false),
             LessonKind::Normal { lesson, .. } => {
                 let base = if lesson == LESSONS_PER_UNIT - 1 { 20 } else { 10 };
                 (base + if run.mistakes == 0 { 5 } else { 0 }, false, lesson == LESSONS_PER_UNIT - 1)
@@ -1395,19 +1403,37 @@ impl App {
                     ui.label(RichText::new("퀴즈 (각 10문제)").font(bold(19.0)));
                     ui.add_space(6.0);
                     let now = ui.input(|i| i.time);
-                    for (label, kind) in [
-                        ("자음 이름 읽기", LessonKind::Letters),
-                        ("자음 계급 맞추기", LessonKind::ConsonantClass),
-                        ("모음 소리 맞추기", LessonKind::Vowels),
-                        ("받침 소리 맞추기", LessonKind::Finals),
-                        ("성조 규칙 맞추기", LessonKind::ToneRules),
-                        ("단어 글자 맞추기", LessonKind::Spelling),
-                        ("단어 읽기 연습", LessonKind::Reading),
+                    for (group, items) in [
+                        (
+                            "글자와 소리",
+                            &[
+                                ("자음 이름 읽기", LessonKind::Letters),
+                                ("자음 계급 맞추기", LessonKind::ConsonantClass),
+                                ("모음 소리 맞추기", LessonKind::Vowels),
+                                ("받침 소리 맞추기", LessonKind::Finals),
+                                ("성조 규칙 맞추기", LessonKind::ToneRules),
+                            ][..],
+                        ),
+                        (
+                            "읽기 연습",
+                            &[
+                                ("단어 글자 맞추기", LessonKind::Spelling),
+                                ("단어 읽기 연습", LessonKind::Reading),
+                                ("문장 읽기 (뜻 고르기)", LessonKind::SentenceReading),
+                                ("표지판 읽기", LessonKind::Signs),
+                                ("태국 숫자 읽기", LessonKind::Digits),
+                            ][..],
+                        ),
                     ] {
-                        if button3d(ui, label, vec2(col_w.min(420.0), 46.0), ORANGE, true).clicked() {
-                            self.start(kind, now);
+                        ui.label(RichText::new(group).font(font(14.0)).color(muted()));
+                        ui.add_space(2.0);
+                        for (label, kind) in items {
+                            if button3d(ui, label, vec2(col_w.min(420.0), 44.0), ORANGE, true).clicked() {
+                                self.start(*kind, now);
+                            }
+                            ui.add_space(6.0);
                         }
-                        ui.add_space(6.0);
+                        ui.add_space(4.0);
                     }
                     ui.add_space(10.0);
                     ui.label(RichText::new("글자표").font(bold(19.0)));
@@ -1416,7 +1442,7 @@ impl App {
                     // pages: 0 basic consonants, 1 other consonants, 2 vowels, 3 final sounds, 4 the five tones, 5 tone rules
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                        for (v, label) in [(0u8, "자음 28자"), (1, "자음 16자"), (2, "모음 23개"), (3, "받침 8개"), (4, "성조 5개"), (5, "성조 규칙")] {
+                        for (v, label) in [(0u8, "자음 28자"), (1, "자음 16자"), (2, "모음 23개"), (3, "받침 8개"), (4, "성조 5개"), (5, "성조 규칙"), (6, "특수 표기"), (7, "태국 숫자")] {
                             let sel = self.letters_page == v;
                             let r = if sel {
                                 button3d(ui, label, vec2(108.0, 44.0), PRIMARY, true)
@@ -1538,13 +1564,68 @@ impl App {
                                 .color(muted()),
                             );
                         });
-                    } else {
+                    } else if self.letters_page == 5 {
                         self.tone_rules_page(ui, col_w);
+                    } else if self.letters_page == 6 {
+                        self.specials_page(ui, col_w);
+                    } else {
+                        self.digits_page(ui, col_w);
                     }
                     ui.add_space(30.0);
                 });
             });
         });
+    }
+
+    /// "특수 표기" page: letter clusters, leading ห and อ, silent letters, the repeat sign.
+    fn specials_page(&mut self, ui: &mut Ui, col_w: f32) {
+        ui.label(RichText::new("글자를 읽다 보면 규칙대로 읽히지 않는 모양이 나와요. 다섯 가지만 알면 대부분 읽을 수 있어요.").font(font(15.0)).color(muted()));
+        ui.add_space(8.0);
+        for sp in crate::data::SPECIALS {
+            card_frame().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                ui.set_width(col_w - 32.0);
+                ui.label(RichText::new(sp.title).font(bold(18.0)).color(ORANGE));
+                ui.label(RichText::new(sp.desc).font(font(14.0)).color(muted()));
+                ui.add_space(6.0);
+                for (th, pron, ko) in sp.examples {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(*th).font(bold(22.0)));
+                        ui.label(RichText::new(format!("{} · {}", pron, ko)).font(font(14.0)).color(muted()));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if small_speaker(ui, BLUE).clicked() {
+                                self.audio.speak(th, true);
+                            }
+                        });
+                    });
+                }
+            });
+            ui.add_space(8.0);
+        }
+    }
+
+    /// "태국 숫자" page: the ten Thai digits.
+    fn digits_page(&mut self, ui: &mut Ui, col_w: f32) {
+        ui.label(RichText::new("태국에서는 가격표나 메뉴에 태국 숫자가 자주 나와요. 모양을 익혀 두면 편해요. 눌러서 읽는 소리를 들어 보세요.").font(font(15.0)).color(muted()));
+        ui.add_space(8.0);
+        for d in crate::data::DIGITS {
+            card_frame().inner_margin(Margin::symmetric(14, 8)).show(ui, |ui| {
+                ui.set_width(col_w - 32.0);
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(64.0, 50.0), Sense::hover());
+                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, d.glyph, bold(34.0), ORANGE);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(format!("{}  ·  {}", d.arabic, d.ko)).font(bold(16.0)));
+                        ui.label(RichText::new(format!("{}  ({})", d.name, d.pron)).font(font(15.0)).color(muted()));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if small_speaker(ui, BLUE).clicked() {
+                            self.audio.speak(d.name, true);
+                        }
+                    });
+                });
+            });
+            ui.add_space(6.0);
+        }
     }
 
     /// "받침 8개" page: every letter that can end a syllable makes one of eight sounds.
@@ -2213,7 +2294,8 @@ impl App {
                     LessonKind::ConsonantClass => ("계급".to_string(), ORANGE),
                     LessonKind::ToneRules => ("성조".to_string(), ORANGE),
                     LessonKind::Finals => ("받침".to_string(), ORANGE),
-                    LessonKind::Reading => ("읽기".to_string(), ORANGE),
+                    LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs => ("읽기".to_string(), ORANGE),
+                    LessonKind::Digits => ("숫자".to_string(), ORANGE),
                     _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
                 };
                 paint_note(p, hc, 26.0, c);
