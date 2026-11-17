@@ -76,7 +76,7 @@ pub fn rgb(c: [u8; 3]) -> Color32 {
 
 /// A soft, layered shadow under a rounded rectangle (instead of a hard 3D edge).
 pub fn soft_shadow(p: &Painter, rect: Rect, radius: CornerRadius, strength: f32) {
-    let a = if is_dark() { 70.0 } else { 26.0 } * strength;
+    let a = if is_dark() { 60.0 } else { 18.0 } * strength;
     for (i, grow) in [10.0f32, 6.0, 3.0].iter().enumerate() {
         let r = Rect::from_min_max(rect.min + vec2(-grow * 0.3, 2.0), rect.max + vec2(grow * 0.3, grow * 0.9 + 2.0));
         let alpha = (a * (0.35 + 0.3 * i as f32 / 2.0)) as u8;
@@ -114,6 +114,8 @@ pub fn text_size(ui: &Ui, text: &str, f: FontId) -> Vec2 {
 /// A flat pill button with a soft shadow (name kept from the old 3D look).
 pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: bool) -> Response {
     let size = vec2(size.x, size.y.max(48.0)); // at least 48 dp tall so it is easy to hit
+    // One accent: only red (stop / delete) and green / unit colours (answer feedback) keep their own colour.
+    let fill = if fill == BLUE || fill == ORANGE || fill == Color32::from_rgb(255, 170, 40) || fill == Color32::from_rgb(140, 100, 230) { PRIMARY } else { fill };
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let pressed = enabled && resp.is_pointer_button_down_on();
@@ -124,18 +126,13 @@ pub fn button3d(ui: &mut Ui, text: &str, size: Vec2, fill: Color32, enabled: boo
     };
     let p = ui.painter();
     let body = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
-    let r = CornerRadius::same((body.height() / 2.0).clamp(12.0, 30.0) as u8);
+    let r = CornerRadius::same(14);
     let face = if pressed { body.translate(vec2(0.0, 2.0)) } else { body };
     if enabled && !pressed {
-        soft_shadow(p, face, r, 1.2);
+        soft_shadow(p, face, r, 0.7);
     }
     p.rect_filled(face, r, face_c);
-    if enabled {
-        // a faint top highlight gives the flat colour a little depth
-        let hl = Rect::from_min_max(face.min + vec2(14.0, 1.5), Pos2::new(face.max.x - 14.0, face.min.y + 3.0));
-        p.rect_filled(hl, CornerRadius::same(2), Color32::from_white_alpha(46));
-    }
-    p.text(face.center(), Align2::CENTER_CENTER, text, bold(16.0), text_c);
+    p.text(face.center(), Align2::CENTER_CENTER, text, bold(15.0), text_c);
     if enabled {
         resp.on_hover_cursor(CursorIcon::PointingHand)
     } else {
@@ -150,13 +147,10 @@ pub fn outline_button(ui: &mut Ui, text: &str, size: Vec2, text_color: Color32) 
     let pressed = resp.is_pointer_button_down_on();
     let p = ui.painter();
     let body = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
-    let r = CornerRadius::same((body.height() / 2.0).clamp(12.0, 30.0) as u8);
+    let r = CornerRadius::same(14);
     let face = if pressed { body.translate(vec2(0.0, 2.0)) } else { body };
-    if !pressed {
-        soft_shadow(p, face, r, 0.7);
-    }
     p.rect_filled(face, r, if resp.hovered() { hover() } else { surface() });
-    p.rect_stroke(face, r, Stroke::new(1.5, border()), StrokeKind::Inside);
+    p.rect_stroke(face, r, Stroke::new(1.2, border()), StrokeKind::Inside);
     p.text(face.center(), Align2::CENTER_CENTER, text, bold(15.0), text_color);
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
@@ -217,7 +211,7 @@ pub fn fit_text(p: &Painter, text: &str, size: f32, min: f32, color: Color32, wi
 pub fn choice_card(ui: &mut Ui, number: usize, card: &Card, size: Vec2, look: Look, interactive: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, if interactive { Sense::click() } else { Sense::hover() });
     let p = ui.painter();
-    paint_card_frame(p, rect, look, resp.hovered() && interactive, 20);
+    paint_card_frame(p, rect, look, resp.hovered() && interactive, 16);
     let (_, border, text_c) = look_colors(look);
     let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 3.0));
     // number badge
@@ -225,14 +219,14 @@ pub fn choice_card(ui: &mut Ui, number: usize, card: &Card, size: Vec2, look: Lo
     let mut outline = diamond_points(badge.center(), 15.0, 1.4);
     outline.push(outline[0]);
     p.add(egui::Shape::line(outline, Stroke::new(2.0, if look == Look::Normal { self::border() } else { border })));
-    p.text(badge.center(), Align2::CENTER_CENTER, number.to_string(), bold(13.0), if look == Look::Normal { muted() } else { text_c });
+    p.text(badge.center(), Align2::CENTER_CENTER, number.to_string(), bold(14.0), if look == Look::Normal { muted() } else { text_c });
     let compact = size.x < 220.0;
     let x = face.left() + if compact { 46.0 } else { 52.0 };
     if card.thai {
         if card.sub.is_empty() {
-            p.text(Pos2::new(x, face.center().y), Align2::LEFT_CENTER, &card.main, bold(26.0), text_c);
+            p.text(Pos2::new(x, face.center().y), Align2::LEFT_CENTER, &card.main, bold(28.0), text_c);
         } else {
-            p.text(Pos2::new(x, face.center().y - 9.0), Align2::LEFT_CENTER, &card.main, bold(24.0), text_c);
+            p.text(Pos2::new(x, face.center().y - 9.0), Align2::LEFT_CENTER, &card.main, bold(22.0), text_c);
             paint_pron(p, Pos2::new(x, face.center().y + 17.0), false, &card.sub, &card.tones, 14.0);
         }
     } else if card.sub.is_empty() {
@@ -242,7 +236,7 @@ pub fn choice_card(ui: &mut Ui, number: usize, card: &Card, size: Vec2, look: Lo
     } else {
         let g = fit_text(p, &card.main, 18.0, 13.0, text_c, (face.right() - x - 12.0).max(40.0));
         p.galley(Pos2::new(x, face.center().y - 10.0 - g.size().y / 2.0 + 9.0), g, text_c);
-        p.text(Pos2::new(x, face.center().y + 14.0), Align2::LEFT_CENTER, &card.sub, font(13.0), muted());
+        p.text(Pos2::new(x, face.center().y + 14.0), Align2::LEFT_CENTER, &card.sub, font(14.0), muted());
     }
     if interactive {
         resp.on_hover_cursor(CursorIcon::PointingHand)

@@ -740,7 +740,7 @@ impl App {
                 ui.add_space(6.0);
                 ui.label(RichText::new(format!("단원 1~{}은 무료예요. 한 번만 결제하면 나머지 {}개 단원이 모두 열려요. 구독이 아니에요.", FREE_UNITS, UNITS.len() - FREE_UNITS)).font(font(15.0)));
                 ui.add_space(4.0);
-                ui.label(RichText::new("같은 구글 계정이면 앱을 다시 설치하거나 새 폰에서도 '구매 복원'으로 다시 열 수 있어요.").font(font(13.5)).color(muted()));
+                ui.label(RichText::new("같은 구글 계정이면 앱을 다시 설치하거나 새 폰에서도 '구매 복원'으로 다시 열 수 있어요.").font(font(14.0)).color(muted()));
                 ui.add_space(10.0);
                 let label = match (self.buy_state, self.buy_price.is_empty()) {
                     (3, _) => "결제 처리 중이에요".to_string(),
@@ -1092,7 +1092,7 @@ impl App {
                             p.text(ic, Align2::CENTER_CENTER, "ก", bold(20.0), col);
                         }
                         Tab::Words => {
-                            p.text(ic, Align2::CENTER_CENTER, "가", bold(18.0), col);
+                            p.text(ic, Align2::CENTER_CENTER, "가", bold(17.0), col);
                         }
                         Tab::Notebook => paint_note(p, ic, 20.0, if sel { RED } else { col }),
                         Tab::Profile => {
@@ -1101,7 +1101,7 @@ impl App {
                             p.rect_filled(Rect::from_min_size(ic + vec2(-10.0, 9.0), vec2(20.0, 10.0)), CornerRadius::ZERO, surface());
                         }
                     }
-                    p.text(Pos2::new(r.center().x, r.bottom() - 12.0), Align2::CENTER_CENTER, *label, if sel { bold(11.5) } else { font(11.5) }, col);
+                    p.text(Pos2::new(r.center().x, r.bottom() - 12.0), Align2::CENTER_CENTER, *label, if sel { bold(12.0) } else { font(12.0) }, col);
                     if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                         self.tab = *tab;
                     }
@@ -1155,9 +1155,6 @@ impl App {
             let r = ui.max_rect();
             let p = ui.painter().clone();
             let p = &p;
-            // soft background circles
-            p.circle_filled(r.left_top() + vec2(r.width() * 0.15, r.height() * 0.2), r.width().min(r.height()) * 0.35, Color32::from_rgba_unmultiplied(255, 255, 255, 10));
-            p.circle_filled(r.right_bottom() - vec2(r.width() * 0.1, r.height() * 0.15), r.width().min(r.height()) * 0.45, Color32::from_rgba_unmultiplied(255, 255, 255, 12));
             // floating Thai letters
             for (k, ch) in ["ก", "ข", "ส", "ม", "ว", "ด", "น", "ร"].iter().enumerate() {
                 let fx = (k as f32 * 0.137 + 0.08) % 1.0;
@@ -1174,15 +1171,15 @@ impl App {
             paint_mascot(p, Pos2::new(cx, y + 90.0 + bounce), 70.0, true);
             p.text(Pos2::new(cx, y + 215.0), Align2::CENTER_CENTER, "สวัสดี", bold(44.0), Color32::from_rgb(255, 224, 130));
             p.text(Pos2::new(cx, y + 268.0), Align2::CENTER_CENTER, "사왓디", bold(54.0), WHITE);
-            p.text(Pos2::new(cx, y + 314.0), Align2::CENTER_CENTER, "한국인을 위한 태국어", font(18.0), Color32::from_white_alpha(220));
+            p.text(Pos2::new(cx, y + 314.0), Align2::CENTER_CENTER, "한국인을 위한 태국어", font(17.0), Color32::from_white_alpha(220));
             let bw = 320.0f32.min(r.width() - 60.0);
             let btn = Rect::from_center_size(Pos2::new(cx, y + 392.0), vec2(bw, 56.0));
             let mut ui_btn = ui.new_child(egui::UiBuilder::new().max_rect(btn));
             if button3d(&mut ui_btn, "시작하기", vec2(bw, 56.0), Color32::from_rgb(255, 170, 40), true).clicked() {
                 go = true;
             }
-            p.text(Pos2::new(cx, y + 452.0), Align2::CENTER_CENTER, "화면을 눌러도 시작돼요", font(13.0), Color32::from_white_alpha(170));
-            p.text(Pos2::new(cx, r.bottom() - 46.0), Align2::CENTER_CENTER, format!("버전 {}", APP_VERSION), font(13.0), Color32::from_white_alpha(150));
+            p.text(Pos2::new(cx, y + 452.0), Align2::CENTER_CENTER, "화면을 눌러도 시작돼요", font(14.0), Color32::from_white_alpha(170));
+            p.text(Pos2::new(cx, r.bottom() - 46.0), Align2::CENTER_CENTER, format!("버전 {}", APP_VERSION), font(14.0), Color32::from_white_alpha(150));
         });
         if go || (t > 0.4 && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space) || i.pointer.any_click())) {
             self.splash = false;
@@ -1233,8 +1230,8 @@ impl App {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
         let p = ui.painter();
         paint_mascot(p, Pos2::new(rect.left() + 28.0, rect.center().y - 4.0), 20.0, true);
-        p.text(Pos2::new(rect.left() + 62.0, rect.center().y - 12.0), Align2::LEFT_CENTER, "사왓디", bold(27.0), PRIMARY);
-        p.text(Pos2::new(rect.left() + 63.0, rect.center().y + 15.0), Align2::LEFT_CENTER, "한국인을 위한 태국어", font(12.5), muted());
+        p.text(Pos2::new(rect.left() + 62.0, rect.center().y - 12.0), Align2::LEFT_CENTER, "사왓디", bold(28.0), PRIMARY);
+        p.text(Pos2::new(rect.left() + 63.0, rect.center().y + 15.0), Align2::LEFT_CENTER, "한국인을 위한 태국어", font(12.0), muted());
         ui.add_space(18.0);
         let items = [(Tab::Learn, "학습"), (Tab::Letters, "알파벳 학습"), (Tab::Words, "단어장"), (Tab::Notebook, "오답 노트"), (Tab::Profile, "프로필")];
         for (tab, label) in items {
@@ -1252,7 +1249,7 @@ impl App {
             match tab {
                 Tab::Learn => paint_star(p, ic, 13.0, if sel { GOLD } else { col }),
                 Tab::Letters => {
-                    p.text(ic, Align2::CENTER_CENTER, "ก", bold(24.0), if sel { ORANGE } else { col });
+                    p.text(ic, Align2::CENTER_CENTER, "ก", bold(22.0), if sel { ORANGE } else { col });
                 }
                 Tab::Words => {
                     let b = Rect::from_center_size(ic, vec2(22.0, 26.0));
@@ -1272,7 +1269,7 @@ impl App {
                     }
                 }
             }
-            p.text(Pos2::new(rect.left() + 56.0, rect.center().y), Align2::LEFT_CENTER, label, bold(16.0), if sel { PRIMARY } else { fg() });
+            p.text(Pos2::new(rect.left() + 56.0, rect.center().y), Align2::LEFT_CENTER, label, bold(15.0), if sel { PRIMARY } else { fg() });
             if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                 self.tab = tab;
             }
@@ -1396,7 +1393,7 @@ impl App {
         // daily goal
         card_frame().show(ui, |ui| {
             ui.set_width(w - 40.0);
-            ui.label(RichText::new("오늘의 목표").font(bold(18.0)));
+            ui.label(RichText::new("오늘의 목표").font(bold(17.0)));
             ui.add_space(4.0);
             let xp = self.p.xp_today();
             let goal = self.p.daily_goal;
@@ -1408,7 +1405,7 @@ impl App {
                     ui.label(RichText::new(format!("XP {} 얻기", goal)).font(bold(15.0)));
                     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
                     progress_bar(ui.painter(), r, xp as f32 / goal as f32, GOLD);
-                    ui.label(RichText::new(format!("{} / {} XP", xp.min(goal), goal)).font(font(13.0)).color(muted()));
+                    ui.label(RichText::new(format!("{} / {} XP", xp.min(goal), goal)).font(font(14.0)).color(muted()));
                 });
             });
         });
@@ -1420,11 +1417,11 @@ impl App {
         if learned > 0 {
             card_frame().show(ui, |ui| {
                 ui.set_width(w - 40.0);
-                ui.label(RichText::new("복습하기").font(bold(18.0)));
+                ui.label(RichText::new("복습하기").font(bold(17.0)));
                 let msg = if due > 0 {
                     format!("다시 볼 때가 된 단어가 {}개 있어요.", due)
                 } else {
-                    "오늘 복습할 단어를 모두 끝냈어요!".to_string()
+                    "오늘 복습할 단어를 모두 끝냈어요".to_string()
                 };
                 ui.label(RichText::new(msg).font(font(14.0)).color(muted()));
                 ui.add_space(4.0);
@@ -1439,7 +1436,7 @@ impl App {
         if crate::data::dialogues_open(&self.p.done).len() >= 3 {
             card_frame().show(ui, |ui| {
                 ui.set_width(w - 40.0);
-                ui.label(RichText::new("대화 연습").font(bold(18.0)));
+                ui.label(RichText::new("대화 연습").font(bold(17.0)));
                 ui.label(RichText::new("상대의 말을 듣고 알맞은 대답을 골라 보세요.").font(font(14.0)).color(muted()));
                 ui.add_space(4.0);
                 if button3d(ui, "대화 시작하기", vec2(ui.available_width(), 44.0), PRIMARY, true).clicked() {
@@ -1456,7 +1453,7 @@ impl App {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
                     paint_note(ui.painter(), r.center(), 26.0, RED);
-                    ui.label(RichText::new("오답 노트").font(bold(18.0)));
+                    ui.label(RichText::new("오답 노트").font(bold(17.0)));
                 });
                 let msg = if n > 0 {
                     format!("틀린 문제 {}개가 기다리고 있어요. 두 번 연달아 맞히면 졸업해요.", n)
@@ -1480,17 +1477,17 @@ impl App {
         let female = self.p.female();
         card_frame().show(ui, |ui| {
             ui.set_width(w - 40.0);
-            ui.label(RichText::new("오늘의 표현").font(bold(18.0)));
+            ui.label(RichText::new("오늘의 표현").font(bold(17.0)));
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                if speaker_button(ui, 44.0, BLUE).clicked() {
+                if speaker_button(ui, 44.0, PRIMARY).clicked() {
                     self.audio.speak(&lesson::sentence_thai(sent, female), false);
                 }
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.label(RichText::new(lesson::sentence_thai(sent, female)).font(bold(22.0)).color(fg()));
-                    ui.label(RichText::new(lesson::sentence_pron(sent, female)).font(font(13.5)).color(muted()));
-                    ui.label(RichText::new(lesson::sentence_tones(sent, female)).font(bold(13.5)).color(TONE));
+                    ui.label(RichText::new(lesson::sentence_pron(sent, female)).font(font(14.0)).color(muted()));
+                    ui.label(RichText::new(lesson::sentence_tones(sent, female)).font(bold(14.0)).color(TONE));
                 });
             });
             ui.label(RichText::new(sent.korean()).font(font(15.0)));
@@ -1499,7 +1496,7 @@ impl App {
         // tip
         card_frame().show(ui, |ui| {
             ui.set_width(w - 40.0);
-            ui.label(RichText::new("알아 두면 좋아요").font(bold(16.0)));
+            ui.label(RichText::new("알아 두면 좋아요").font(bold(15.0)));
             ui.label(
                 RichText::new("한글 발음이 같아도 성조가 다르면 다른 말이에요. ไม่ 마이↘ (아니다), ไหม 마이↗ (질문), ใหม่ 마이↓ (새로운). 주황색 화살표가 성조예요.")
                     .font(font(14.0))
@@ -1539,7 +1536,7 @@ impl App {
                     let (row, _) = ui.allocate_exact_size(vec2(full, if u == 0 { 56.0 } else { 80.0 }), Sense::hover());
                     let p = ui.painter();
                     let y = row.bottom() - 30.0;
-                    let g = p.layout_no_wrap(format!("{name} 과정 · {desc}"), bold(16.0), muted());
+                    let g = p.layout_no_wrap(format!("{name} 과정 · {desc}"), bold(15.0), muted());
                     let tw = g.size().x + 30.0;
                     let cx = left + col_w / 2.0;
                     p.line_segment([Pos2::new(left, y), Pos2::new(cx - tw / 2.0, y)], Stroke::new(2.0, border()));
@@ -1562,7 +1559,7 @@ impl App {
                 p.text(banner.left_top() + vec2(22.0, if col_w < 420.0 { 10.0 } else { 18.0 }), Align2::LEFT_TOP, format!("단원 {} · {}", u + 1, crate::data::level_name(u)), bold(14.0), Color32::from_white_alpha(225));
                 p.text(banner.left_top() + vec2(22.0, if col_w < 420.0 { 32.0 } else { 38.0 }), Align2::LEFT_TOP, unit.title, bold(if col_w < 420.0 { 21.0 } else { 23.0 }), WHITE);
                 if col_w < 420.0 {
-                    p.text(banner.left_top() + vec2(22.0, 62.0), Align2::LEFT_TOP, unit.desc, font(12.5), Color32::from_white_alpha(235));
+                    p.text(banner.left_top() + vec2(22.0, 62.0), Align2::LEFT_TOP, unit.desc, font(12.0), Color32::from_white_alpha(235));
                 } else {
                     p.text(banner.right_center() + vec2(-22.0, 0.0), Align2::RIGHT_CENTER, unit.desc, font(14.0), Color32::from_white_alpha(235));
                 }
@@ -1571,7 +1568,7 @@ impl App {
                     banner.right_top() + vec2(-22.0, 16.0),
                     Align2::RIGHT_TOP,
                     if paid_locked { "전체 열기".to_string() } else { format!("{}/{}", doneu, LESSONS_PER_UNIT) },
-                    bold(13.0),
+                    bold(14.0),
                     Color32::from_white_alpha(225),
                 );
                 ui.add_space(26.0);
@@ -1699,7 +1696,7 @@ impl App {
                 ui.add_space(30.0);
             }
             let (row, _) = ui.allocate_exact_size(vec2(full, 80.0), Sense::hover());
-            ui.painter().text(row.center(), Align2::CENTER_CENTER, "새 단원이 곧 추가될 예정이에요!", font(15.0), muted());
+            ui.painter().text(row.center(), Align2::CENTER_CENTER, "새 단원이 곧 추가될 예정이에요", font(15.0), muted());
             if let Some((u, l)) = start {
                 self.try_start(u, l, now);
             }
@@ -1716,9 +1713,6 @@ impl App {
     fn page_header(ui: &mut Ui, title: &str, sub: &str) {
         ui.add_space(26.0);
         // the little elephant sits at the right end of the title line
-        let top = ui.cursor().top();
-        let right = ui.max_rect().right();
-        paint_mascot(ui.painter(), Pos2::new(right - 30.0, top + 18.0), 17.0, true);
         ui.label(RichText::new(title).font(bold(28.0)));
         ui.label(RichText::new(sub).font(font(15.0)).color(muted()));
         ui.add_space(14.0);
@@ -1734,7 +1728,7 @@ impl App {
                 ui.vertical(|ui| {
                     ui.set_width(col_w);
                     Self::page_header(ui, "알파벳 학습", "태국 글자를 눌러 소리를 들어 보고, 아래 퀴즈로 연습해 보세요.");
-                    ui.label(RichText::new("퀴즈 (각 10문제)").font(bold(19.0)));
+                    ui.label(RichText::new("퀴즈 (각 10문제)").font(bold(20.0)));
                     ui.add_space(6.0);
                     let now = ui.input(|i| i.time);
                     for (group, items) in [
@@ -1762,7 +1756,7 @@ impl App {
                         ui.label(RichText::new(group).font(font(14.0)).color(muted()));
                         ui.add_space(2.0);
                         for (label, kind) in items {
-                            if button3d(ui, label, vec2(col_w.min(420.0), 44.0), ORANGE, true).clicked() {
+                            if outline_button(ui, label, vec2(col_w.min(420.0), 48.0), fg()).clicked() {
                                 self.start(*kind, now);
                             }
                             ui.add_space(6.0);
@@ -1770,7 +1764,7 @@ impl App {
                         ui.add_space(4.0);
                     }
                     ui.add_space(10.0);
-                    ui.label(RichText::new("글자표").font(bold(19.0)));
+                    ui.label(RichText::new("글자표").font(bold(20.0)));
                     ui.label(RichText::new("글자를 눌러 소리를 들어 보세요. 자음은 성조 규칙에 따라 세 무리로 나뉘어요.").font(font(14.0)).color(muted()));
                     ui.add_space(8.0);
                     // pages: 0 basic consonants, 1 other consonants, 2 vowels, 3 final sounds, 4 the five tones, 5 tone rules
@@ -1820,7 +1814,7 @@ impl App {
                                     p.rect_filled(face, CornerRadius::same(16), if resp.hovered() { lighten(col, 0.9) } else { surface() });
                                     p.rect_stroke(face, CornerRadius::same(16), Stroke::new(1.2, if resp.hovered() { lighten(col, 0.4) } else { border() }), StrokeKind::Inside);
                                     p.text(face.center_top() + vec2(0.0, 12.0), Align2::CENTER_TOP, cons.letter, bold(42.0), col);
-                                    p.text(face.center_top() + vec2(0.0, 72.0), Align2::CENTER_TOP, cons.name_pron, bold(13.5), fg());
+                                    p.text(face.center_top() + vec2(0.0, 72.0), Align2::CENTER_TOP, cons.name_pron, bold(14.0), fg());
                                     p.text(face.center_top() + vec2(0.0, 93.0), Align2::CENTER_TOP, format!("{} · {}", cons.sound, cons.meaning), font(12.0), muted());
                                     if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                                         self.audio.speak(cons.name, true);
@@ -1837,9 +1831,9 @@ impl App {
                                 ui.set_width(col_w - 32.0);
                                 ui.horizontal(|ui| {
                                     let (r, _) = ui.allocate_exact_size(vec2(92.0, 52.0), Sense::hover());
-                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.form, bold(26.0), ORANGE);
+                                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, v.form, bold(28.0), ORANGE);
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new(v.sound).font(bold(16.0)));
+                                        ui.label(RichText::new(v.sound).font(bold(15.0)));
                                         ui.label(RichText::new(format!("예: {}  ({})", v.example, v.example_pron)).font(font(15.0)).color(muted()));
                                     });
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1868,7 +1862,7 @@ impl App {
                                     ui.vertical(|ui| {
                                         ui.set_width(250.0);
                                         ui.add_space(6.0);
-                                        ui.label(RichText::new(t.name).font(bold(18.0)));
+                                        ui.label(RichText::new(t.name).font(bold(17.0)));
                                         ui.label(RichText::new(t.how).font(font(14.0)).color(muted()));
                                     });
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1954,7 +1948,7 @@ impl App {
     }
 
     fn about_sections(&mut self, ui: &mut Ui, col_w: f32, now: f64) {
-        ui.label(RichText::new("정보").font(bold(21.0)));
+        ui.label(RichText::new("정보").font(bold(20.0)));
         ui.add_space(4.0);
         egui::CollapsingHeader::new(RichText::new("학습 알림").font(bold(17.0))).default_open(true).show(ui, |ui| {
             if !notify::supported() {
@@ -1988,7 +1982,7 @@ impl App {
                 }
             }
             ui.add_space(2.0);
-            ui.label(RichText::new("정해 둔 시각 무렵에 알림이 한 번 와요(절전 때문에 최대 1시간 늦을 수 있어요). 그날 이미 공부했으면 쉬고, 앱을 7일 동안 열지 않으면 알림이 멈춰요. 알림이 오지 않으면 휴대폰 설정에서 알림을 허용해 주세요.").font(font(13.0)).color(muted()));
+            ui.label(RichText::new("정해 둔 시각 무렵에 알림이 한 번 와요(절전 때문에 최대 1시간 늦을 수 있어요). 그날 이미 공부했으면 쉬고, 앱을 7일 동안 열지 않으면 알림이 멈춰요. 알림이 오지 않으면 휴대폰 설정에서 알림을 허용해 주세요.").font(font(14.0)).color(muted()));
             if changed {
                 self.sync_reminder();
             }
@@ -1999,13 +1993,13 @@ impl App {
                 if self.owned {
                     ui.label(RichText::new("전체 단원이 열려 있어요. 구매해 주셔서 감사해요!").font(font(14.0)));
                 } else {
-                    ui.label(RichText::new(format!("단원 1~{}은 무료예요. 한 번 결제하면 모든 단원이 열려요(구독 아님).", FREE_UNITS)).font(font(13.5)).color(muted()));
+                    ui.label(RichText::new(format!("단원 1~{}은 무료예요. 한 번 결제하면 모든 단원이 열려요(구독 아님).", FREE_UNITS)).font(font(14.0)).color(muted()));
                     if button3d(ui, "전체 단원 열기", vec2(220.0, 46.0), PRIMARY, true).clicked() {
                         self.show_paywall = true;
                     }
                 }
                 ui.add_space(4.0);
-                ui.label(RichText::new("앱을 다시 설치했거나 새 폰이라면, 구매할 때 쓴 구글 계정으로 로그인한 상태에서 아래 버튼을 눌러 주세요.").font(font(13.5)).color(muted()));
+                ui.label(RichText::new("앱을 다시 설치했거나 새 폰이라면, 구매할 때 쓴 구글 계정으로 로그인한 상태에서 아래 버튼을 눌러 주세요.").font(font(14.0)).color(muted()));
                 if outline_button(ui, "구매 복원", vec2(200.0, 44.0), fg()).clicked() {
                     notify::billing_refresh();
                     self.toast("구글 플레이에서 구매 내역을 확인하고 있어요", now);
@@ -2014,7 +2008,7 @@ impl App {
         }
         egui::CollapsingHeader::new(RichText::new("학습 기록 백업").font(bold(17.0))).show(ui, |ui| {
             ui.set_width(col_w - 40.0);
-            ui.label(RichText::new("폰을 바꾸거나 앱을 다시 설치하기 전에 백업 코드를 복사해 메모 앱이나 메시지(나에게 보내기)에 붙여 두세요. 새 기기에서 코드를 복사한 뒤 '불러오기'를 누르면 기록이 돌아와요. 코드는 이 기기 밖으로 자동 전송되지 않아요.").font(font(13.5)).color(muted()));
+            ui.label(RichText::new("폰을 바꾸거나 앱을 다시 설치하기 전에 백업 코드를 복사해 메모 앱이나 메시지(나에게 보내기)에 붙여 두세요. 새 기기에서 코드를 복사한 뒤 '불러오기'를 누르면 기록이 돌아와요. 코드는 이 기기 밖으로 자동 전송되지 않아요.").font(font(14.0)).color(muted()));
             ui.add_space(4.0);
             if outline_button(ui, "백업 코드 복사", vec2(200.0, 44.0), fg()).clicked() {
                 let code = self.backup_code();
@@ -2025,7 +2019,7 @@ impl App {
             }
             if !notify::supported() {
                 ui.add_space(4.0);
-                ui.label(RichText::new("불러오기: 코드를 아래 칸에 붙여 넣으세요.").font(font(13.5)).color(muted()));
+                ui.label(RichText::new("불러오기: 코드를 아래 칸에 붙여 넣으세요.").font(font(14.0)).color(muted()));
                 ui.add(egui::TextEdit::multiline(&mut self.backup_input).desired_rows(3).desired_width(f32::INFINITY));
             }
             ui.add_space(4.0);
@@ -2080,7 +2074,7 @@ impl App {
                 ui.label(RichText::new(l).font(font(15.0)));
             }
             ui.add_space(4.0);
-            ui.label(RichText::new("시험 사용에 참여 중이라면 이 화면을 캡처해서 보내 주세요. 이 정보는 기기 밖으로 자동 전송되지 않아요.").font(font(13.0)).color(muted()));
+            ui.label(RichText::new("시험 사용에 참여 중이라면 이 화면을 캡처해서 보내 주세요. 이 정보는 기기 밖으로 자동 전송되지 않아요.").font(font(14.0)).color(muted()));
         });
         egui::CollapsingHeader::new(RichText::new("음성과 내용 안내").font(bold(17.0))).show(ui, |ui| {
             ui.set_width(col_w - 40.0);
@@ -2107,7 +2101,7 @@ impl App {
         for sp in crate::data::SPECIALS {
             card_frame().inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
                 ui.set_width(col_w - 32.0);
-                ui.label(RichText::new(sp.title).font(bold(18.0)).color(ORANGE));
+                ui.label(RichText::new(sp.title).font(bold(17.0)).color(ORANGE));
                 ui.label(RichText::new(sp.desc).font(font(14.0)).color(muted()));
                 ui.add_space(6.0);
                 for (th, pron, ko) in sp.examples {
@@ -2137,7 +2131,7 @@ impl App {
                     let (r, _) = ui.allocate_exact_size(vec2(64.0, 50.0), Sense::hover());
                     ui.painter().text(r.left_center(), Align2::LEFT_CENTER, d.glyph, bold(34.0), ORANGE);
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(format!("{}  ·  {}", d.arabic, d.ko)).font(bold(16.0)));
+                        ui.label(RichText::new(format!("{}  ·  {}", d.arabic, d.ko)).font(bold(15.0)));
                         ui.label(RichText::new(format!("{}  ({})", d.name, d.pron)).font(font(15.0)).color(muted()));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2203,8 +2197,8 @@ impl App {
             let col = [PRIMARY, ORANGE, BLUE][class as usize];
             card_frame().inner_margin(Margin::symmetric(18, 12)).show(ui, |ui| {
                 ui.set_width(col_w - 40.0);
-                ui.label(RichText::new(crate::data::class_name(class)).font(bold(19.0)).color(col));
-                ui.label(RichText::new(crate::data::class_letters(class)).font(bold(21.0)));
+                ui.label(RichText::new(crate::data::class_name(class)).font(bold(20.0)).color(col));
+                ui.label(RichText::new(crate::data::class_letters(class)).font(bold(20.0)));
                 ui.add_space(6.0);
                 for r in TONE_RULES.iter().filter(|r| r.class == class) {
                     let t = tone_of(r.tone);
@@ -2214,7 +2208,7 @@ impl App {
                         let p = ui.painter();
                         p.rect_filled(rect, CornerRadius::same(10), lighten(TONE, 0.85));
                         p.text(rect.center(), Align2::CENTER_CENTER, t.map(|t| t.mark).unwrap_or(""), bold(22.0), TONE);
-                        ui.label(RichText::new(t.map(|t| t.name).unwrap_or("")).font(bold(16.0)));
+                        ui.label(RichText::new(t.map(|t| t.name).unwrap_or("")).font(bold(15.0)));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if small_speaker(ui, BLUE).clicked() {
                                 self.audio.speak(r.example, true);
@@ -2264,7 +2258,7 @@ impl App {
                             ui.vertical_centered(|ui| {
                                 let (r, _) = ui.allocate_exact_size(vec2(140.0, 120.0), Sense::hover());
                                 paint_mascot(ui.painter(), r.center(), 40.0, true);
-                                ui.label(RichText::new("틀린 문제가 하나도 없어요!").font(bold(19.0)));
+                                ui.label(RichText::new("틀린 문제가 하나도 없어요").font(bold(20.0)));
                                 ui.label(RichText::new("레슨에서 틀리거나 건너뛴 문제는 여기에 모여요.").font(font(14.0)).color(muted()));
                             });
                         });
@@ -2376,7 +2370,7 @@ impl App {
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(8.0, 26.0), Sense::hover());
                             ui.painter().rect_filled(r, CornerRadius::same(4), color);
-                            ui.label(RichText::new(format!("단원 {} · {}", u + 1, unit.title)).font(bold(19.0)));
+                            ui.label(RichText::new(format!("단원 {} · {}", u + 1, unit.title)).font(bold(20.0)));
                         });
                         ui.add_space(4.0);
                         card_frame().inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
@@ -2399,7 +2393,7 @@ impl App {
                                     } else {
                                         p.text(Pos2::new(rect.left() + 14.0, y), Align2::LEFT_CENTER, wd.th, bold(22.0), fg());
                                         paint_pron(p, Pos2::new(rect.left() + 180.0, y), false, wd.pron, &crate::data::tone_marks(wd.tone), 15.0);
-                                        p.text(Pos2::new(rect.left() + 330.0, y), Align2::LEFT_CENTER, wd.ko, font(15.5), fg());
+                                        p.text(Pos2::new(rect.left() + 330.0, y), Align2::LEFT_CENTER, wd.ko, font(15.0), fg());
                                     }
                                     // memory strength: 4 bars
                                     let level = self.p.stat(u, i).map(|s| s.level).unwrap_or(0);
@@ -2451,7 +2445,7 @@ impl App {
                     let p = ui.painter();
                     p.rect_filled(rect, CornerRadius::same(18), primary_soft());
                     paint_mascot(p, Pos2::new(rect.left() + 90.0, rect.center().y - 4.0), 44.0, true);
-                    p.text(Pos2::new(rect.left() + 170.0, rect.center().y - 22.0), Align2::LEFT_CENTER, "나의 태국어", bold(26.0), ink(PRIMARY, 0.75));
+                    p.text(Pos2::new(rect.left() + 170.0, rect.center().y - 22.0), Align2::LEFT_CENTER, "나의 태국어", bold(28.0), ink(PRIMARY, 0.75));
                     let lvl = 1 + self.p.xp_total / 100;
                     p.text(
                         Pos2::new(rect.left() + 170.0, rect.center().y + 14.0),
@@ -2461,7 +2455,7 @@ impl App {
                         ink(PRIMARY, 0.7),
                     );
                     ui.add_space(18.0);
-                    ui.label(RichText::new("통계").font(bold(21.0)));
+                    ui.label(RichText::new("통계").font(bold(20.0)));
                     let stats = [
                         ("연속 학습", format!("{}일", self.p.streak_now()), ORANGE, 0),
                         ("총 XP", format!("{}", self.p.xp_total), GOLD, 1),
@@ -2486,15 +2480,15 @@ impl App {
                                         p.text(ic, Align2::CENTER_CENTER, "ก", bold(28.0), *c);
                                     }
                                 }
-                                p.text(Pos2::new(r.left() + 64.0, r.center().y - 11.0), Align2::LEFT_CENTER, value, bold(21.0), fg());
-                                p.text(Pos2::new(r.left() + 64.0, r.center().y + 14.0), Align2::LEFT_CENTER, *label, font(13.5), muted());
+                                p.text(Pos2::new(r.left() + 64.0, r.center().y - 11.0), Align2::LEFT_CENTER, value, bold(20.0), fg());
+                                p.text(Pos2::new(r.left() + 64.0, r.center().y + 14.0), Align2::LEFT_CENTER, *label, font(14.0), muted());
                             }
                         });
                         ui.add_space(4.0);
                     }
                     ui.add_space(14.0);
                     // weekly chart
-                    ui.label(RichText::new("이번 주 XP").font(bold(21.0)));
+                    ui.label(RichText::new("이번 주 XP").font(bold(20.0)));
                     card_frame().show(ui, |ui| {
                         ui.set_width(col_w - 40.0);
                         let (r, _) = ui.allocate_exact_size(vec2(col_w - 40.0, 160.0), Sense::hover());
@@ -2507,7 +2501,7 @@ impl App {
                         let base_wd = chrono::Local::now().date_naive().weekday().num_days_from_monday() as i32;
                         let gy = r.bottom() - 24.0 - (self.p.daily_goal as f32 / maxv) * (r.height() - 50.0);
                         p.line_segment([Pos2::new(r.left(), gy), Pos2::new(r.right(), gy)], Stroke::new(1.5, lighten(GOLD, 0.4)));
-                        p.text(Pos2::new(r.right(), gy - 4.0), Align2::RIGHT_BOTTOM, "목표", font(11.0), Color32::from_rgb(220, 160, 0));
+                        p.text(Pos2::new(r.right(), gy - 4.0), Align2::RIGHT_BOTTOM, "목표", font(12.0), Color32::from_rgb(220, 160, 0));
                         for (k, v) in vals.iter().enumerate() {
                             let x = r.left() + bw * (k as f32 + 0.5);
                             let h = (*v as f32 / maxv) * (r.height() - 50.0);
@@ -2517,12 +2511,12 @@ impl App {
                                 p.text(bar.center_top() - vec2(0.0, 4.0), Align2::CENTER_BOTTOM, v.to_string(), bold(12.0), fg());
                             }
                             let wd = (base_wd - 6 + k as i32).rem_euclid(7) as usize;
-                            p.text(Pos2::new(x, r.bottom() - 8.0), Align2::CENTER_CENTER, names[wd], if k == 6 { bold(13.0) } else { font(13.0) }, if k == 6 { fg() } else { muted() });
+                            p.text(Pos2::new(x, r.bottom() - 8.0), Align2::CENTER_CENTER, names[wd], if k == 6 { bold(14.0) } else { font(14.0) }, if k == 6 { fg() } else { muted() });
                         }
                     });
                     ui.add_space(14.0);
                     // daily goal
-                    ui.label(RichText::new("하루 목표").font(bold(21.0)));
+                    ui.label(RichText::new("하루 목표").font(bold(20.0)));
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
                         let bw = (col_w - 30.0) / 4.0;
@@ -2540,7 +2534,7 @@ impl App {
                     });
                     ui.add_space(14.0);
                     // achievements
-                    ui.label(RichText::new("업적").font(bold(21.0)));
+                    ui.label(RichText::new("업적").font(bold(20.0)));
                     let unit1 = self.p.done[0] as u32;
                     let ach = [
                         ("첫걸음", "레슨 1개 끝내기", self.p.lessons_done.min(1), 1, PRIMARY),
@@ -2563,19 +2557,19 @@ impl App {
                             let badge = Rect::from_center_size(Pos2::new(r.left() + 30.0, r.center().y), vec2(48.0, 50.0));
                             p.rect_filled(badge, CornerRadius::same(14), if done { *c } else { hover() });
                             paint_star(p, badge.center(), 14.0, if done { WHITE } else { faint() });
-                            p.text(Pos2::new(r.left() + 68.0, r.center().y - 14.0), Align2::LEFT_CENTER, *name, bold(16.0), fg());
-                            p.text(Pos2::new(r.left() + 68.0, r.center().y + 6.0), Align2::LEFT_CENTER, *desc, font(13.0), muted());
+                            p.text(Pos2::new(r.left() + 68.0, r.center().y - 14.0), Align2::LEFT_CENTER, *name, bold(15.0), fg());
+                            p.text(Pos2::new(r.left() + 68.0, r.center().y + 6.0), Align2::LEFT_CENTER, *desc, font(14.0), muted());
                             let bar = if compact_ach {
                                 Rect::from_min_size(Pos2::new(r.left() + 68.0, r.center().y + 20.0), vec2(r.width() - 68.0 - 64.0, 12.0))
                             } else {
                                 Rect::from_min_size(Pos2::new(r.right() - 190.0, r.center().y - 7.0), vec2(130.0, 14.0))
                             };
                             progress_bar(p, bar, *have as f32 / *need as f32, *c);
-                            p.text(Pos2::new(r.right() - 8.0, if compact_ach { r.center().y + 26.0 } else { r.center().y }), Align2::RIGHT_CENTER, format!("{}/{}", have, need), bold(13.0), muted());
+                            p.text(Pos2::new(r.right() - 8.0, if compact_ach { r.center().y + 26.0 } else { r.center().y }), Align2::RIGHT_CENTER, format!("{}/{}", have, need), bold(14.0), muted());
                         }
                     });
                     ui.add_space(14.0);
-                    ui.label(RichText::new("설정").font(bold(21.0)));
+                    ui.label(RichText::new("설정").font(bold(20.0)));
                     ui.label(RichText::new("말투 (문장 끝과 '나'를 어떻게 말할지)").font(font(14.0)).color(muted()));
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
@@ -2646,7 +2640,7 @@ impl App {
                     self.about_sections(ui, col_w, now);
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("앱").font(bold(21.0)));
+                        ui.label(RichText::new("앱").font(bold(20.0)));
                         ui.label(RichText::new(format!("버전 {}", APP_VERSION)).font(font(14.0)).color(muted()));
                     });
                     // iPhone apps do not close themselves (Apple's rules): no quit button there.
@@ -2697,7 +2691,7 @@ impl App {
         soft_shadow(p, face, CornerRadius::same(16), if selected { 1.0 } else { 0.6 });
         p.rect_filled(face, CornerRadius::same(16), fill);
         p.rect_stroke(face, CornerRadius::same(16), Stroke::new(2.0, border), StrokeKind::Inside);
-        p.text(face.left_top() + vec2(20.0, 18.0), Align2::LEFT_TOP, title, bold(19.0), if selected { ink(accent, 0.8) } else { fg() });
+        p.text(face.left_top() + vec2(20.0, 18.0), Align2::LEFT_TOP, title, bold(20.0), if selected { ink(accent, 0.8) } else { fg() });
         p.text(face.left_top() + vec2(20.0, 52.0), Align2::LEFT_TOP, line1, bold(17.0), fg());
         p.text(face.left_top() + vec2(20.0, 82.0), Align2::LEFT_TOP, line2, font(14.0), muted());
         if selected {
@@ -2720,7 +2714,7 @@ impl App {
                         paint_mascot(ui.painter(), mr.center(), 38.0, true);
                         ui.vertical(|ui| {
                             ui.add_space(22.0);
-                            ui.label(RichText::new("사왓디에 오신 걸 환영해요!").font(bold(28.0)).color(PRIMARY));
+                            ui.label(RichText::new("사왓디에 오신 걸 환영해요").font(bold(28.0)).color(PRIMARY));
                             ui.label(RichText::new("시작하기 전에 말투와 단계를 골라 주세요.").font(font(15.0)).color(muted()));
                         });
                     });
@@ -2814,21 +2808,21 @@ impl App {
                 let p = ui.painter();
                 progress_bar(p, bar, done as f32 / total as f32, PRIMARY);
                 if run.combo >= 3 {
-                    p.text(bar.center_top() - vec2(0.0, 6.0), Align2::CENTER_BOTTOM, format!("{}연속 정답!", run.combo), bold(13.0), ORANGE);
+                    p.text(bar.center_top() - vec2(0.0, 6.0), Align2::CENTER_BOTTOM, format!("{}연속 정답", run.combo), bold(14.0), ORANGE);
                 }
                 // what kind of lesson, and how many missed so far
                 let hc = Pos2::new(row.right() - 62.0, row.center().y);
                 let (label, c) = match run.kind {
                     LessonKind::Practice => ("복습".to_string(), BLUE),
                     LessonKind::Mistakes => ("오답".to_string(), RED),
-                    LessonKind::Letters | LessonKind::Spelling => ("글자".to_string(), ORANGE),
-                    LessonKind::Vowels => ("모음".to_string(), ORANGE),
-                    LessonKind::ConsonantClass => ("계급".to_string(), ORANGE),
-                    LessonKind::ToneRules => ("성조".to_string(), ORANGE),
-                    LessonKind::Finals => ("받침".to_string(), ORANGE),
-                    LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs => ("읽기".to_string(), ORANGE),
-                    LessonKind::Digits => ("숫자".to_string(), ORANGE),
-                    LessonKind::Dialogue => ("대화".to_string(), BLUE),
+                    LessonKind::Letters | LessonKind::Spelling => ("글자".to_string(), PRIMARY),
+                    LessonKind::Vowels => ("모음".to_string(), PRIMARY),
+                    LessonKind::ConsonantClass => ("계급".to_string(), PRIMARY),
+                    LessonKind::ToneRules => ("성조".to_string(), PRIMARY),
+                    LessonKind::Finals => ("받침".to_string(), PRIMARY),
+                    LessonKind::Reading | LessonKind::SentenceReading | LessonKind::Signs => ("읽기".to_string(), PRIMARY),
+                    LessonKind::Digits => ("숫자".to_string(), PRIMARY),
+                    LessonKind::Dialogue => ("대화".to_string(), PRIMARY),
                     _ => (format!("{}", run.missed.len()), if run.missed.is_empty() { muted() } else { RED }),
                 };
                 paint_note(p, hc, 26.0, c);
@@ -2842,7 +2836,7 @@ impl App {
                     ui.vertical_centered(|ui| {
                         let (mr, _) = ui.allocate_exact_size(vec2(160.0, 130.0), Sense::hover());
                         paint_mascot(ui.painter(), mr.center(), 48.0, false);
-                        ui.label(RichText::new("정말 그만할까요?").font(bold(24.0)));
+                        ui.label(RichText::new("정말 그만할까요?").font(bold(22.0)));
                         ui.label(RichText::new("지금 그만두면 이번 레슨의 진행 상황이 사라져요.").font(font(15.0)).color(muted()));
                         ui.add_space(14.0);
                         if button3d(ui, "계속 학습하기", vec2(300.0, 50.0), PRIMARY, true).clicked() {
@@ -2965,9 +2959,9 @@ impl App {
                         Some(ok) => {
                             let c = if ok { GREEN } else { RED };
                             let title = if ok && is_match && run.st.match_wrong > 0 {
-                                format!("완료! 실수 {}번", run.st.match_wrong)
+                                format!("완료 · 실수 {}번", run.st.match_wrong)
                             } else if ok {
-                                ["훌륭해요!", "정답이에요!", "잘했어요!", "완벽해요!"][run.pos % 4].to_string()
+                                ["훌륭해요", "정답이에요!", "잘했어요!", "완벽해요!"][run.pos % 4].to_string()
                             } else if flash == Some(false) {
                                 "복습 노트에 넣을게요".to_string()
                             } else {
@@ -3017,7 +3011,7 @@ impl App {
                                     ui.add_space(4.0);
                                     ui.label(RichText::new(&title).font(bold(22.0)).color(ink(c, 0.8)));
                                     if let Some(d) = &detail {
-                                        ui.label(RichText::new(d).font(font(16.0)).color(ink(c, 0.75)));
+                                        ui.label(RichText::new(d).font(font(15.0)).color(ink(c, 0.75)));
                                     }
                                 });
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -3194,13 +3188,13 @@ impl App {
             ui.painter().galley(r.center() - g.size() / 2.0, g, c);
         });
         ui.add_space(6.0);
-        ui.label(RichText::new(&ex.title).font(bold(23.0)));
+        ui.label(RichText::new(&ex.title).font(bold(22.0)));
         ui.add_space(16.0);
 
         // prompt
         if ex.listen_only {
             ui.horizontal(|ui| {
-                if speaker_button(ui, 92.0, BLUE).clicked() {
+                if speaker_button(ui, 92.0, PRIMARY).clicked() {
                     if let Some(t) = &ex.speak {
                         self.audio.speak(t, false);
                     }
@@ -3217,7 +3211,7 @@ impl App {
                 });
             });
             if !self.audio.available() {
-                ui.label(RichText::new("이 컴퓨터에는 태국어 음성이 없어요.").font(font(13.0)).color(muted()));
+                ui.label(RichText::new("이 컴퓨터에는 태국어 음성이 없어요.").font(font(14.0)).color(muted()));
             }
             ui.add_space(20.0);
         } else if let Some(pr) = &ex.prompt_thai {
@@ -3246,7 +3240,7 @@ impl App {
                 let resp = frame.show(ui, |ui| {
                     let layout = if stacked { Layout::top_down(Align::Min) } else { Layout::left_to_right(Align::Min) };
                     ui.with_layout(layout, |ui| {
-                        if speaker_button(ui, 44.0, BLUE).clicked() {
+                        if speaker_button(ui, 44.0, PRIMARY).clicked() {
                             if let Some(t) = &ex.speak {
                                 self.audio.speak(t, false);
                             }
@@ -3291,7 +3285,7 @@ impl App {
                     .inner_margin(Margin::symmetric(18, 14))
                     .show(ui, |ui| {
                         ui.set_max_width(text_w);
-                        ui.add(egui::Label::new(RichText::new(ko).font(bold(21.0))).wrap());
+                        ui.add(egui::Label::new(RichText::new(ko).font(bold(20.0))).wrap());
                     });
             });
             ui.add_space(18.0);
@@ -3401,7 +3395,7 @@ impl App {
                     }
                 });
                 ui.add_space(10.0);
-                ui.label(RichText::new("타일을 눌러 문장을 만들고, 다시 누르면 빠져요. (숫자 키, 지우기 키도 쓸 수 있어요)").font(font(12.5)).color(muted()));
+                ui.label(RichText::new("타일을 눌러 문장을 만들고, 다시 누르면 빠져요. (숫자 키, 지우기 키도 쓸 수 있어요)").font(font(12.0)).color(muted()));
             }
             Body::Flash { th, pron, tones, ko, shadow } => {
                 let big = if *shadow { 30.0 } else { 46.0 };
@@ -3417,7 +3411,7 @@ impl App {
                 if back {
                     p.text(Pos2::new(cx, rect.top() + 44.0), Align2::CENTER_CENTER, th, bold(30.0), muted());
                     p.text(Pos2::new(cx, rect.center().y), Align2::CENTER_CENTER, ko, bold(32.0), ink(PRIMARY, 0.7));
-                    p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, "눌러서 다시 뒤집기", font(13.0), muted());
+                    p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, "눌러서 다시 뒤집기", font(14.0), muted());
                 } else {
                     let g = p.layout(th.clone(), bold(big), fg(), rect.width() - 40.0);
                     let top = rect.top() + if *shadow && notify::rec_supported() { 60.0 } else { 70.0 };
@@ -3429,7 +3423,7 @@ impl App {
                         let g2 = p.layout(ko.clone(), font(17.0), muted(), rect.width() - 40.0);
                         p.galley(Pos2::new(cx - g2.size().x / 2.0, y + 6.0), g2, muted());
                     } else {
-                        p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, if locked { "" } else { "카드를 눌러 뜻 보기" }, font(13.0), muted());
+                        p.text(Pos2::new(cx, rect.bottom() - 30.0), Align2::CENTER_CENTER, if locked { "" } else { "카드를 눌러 뜻 보기" }, font(14.0), muted());
                     }
                 }
                 if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() && !locked && !*shadow {
@@ -3496,10 +3490,10 @@ impl App {
                             paint_pitch_compare(ui, &self.rec_native, &self.rec_mine);
                         } else if matches!(self.rec, RecUi::Idle) {
                             ui.add_space(4.0);
-                            ui.label(RichText::new("녹음한 소리의 높낮이를 원어민과 겹쳐 보여 드려요 (채점은 안 해요)").font(font(12.5)).color(muted()));
+                            ui.label(RichText::new("녹음한 소리의 높낮이를 원어민과 겹쳐 보여 드려요 (채점은 안 해요)").font(font(12.0)).color(muted()));
                         }
                     } else {
-                        ui.label(RichText::new("입 모양을 크게 하고, 들은 대로 소리 내어 읽어 보세요. 스스로 체크해요.").font(font(13.5)).color(muted()));
+                        ui.label(RichText::new("입 모양을 크게 하고, 들은 대로 소리 내어 읽어 보세요. 스스로 체크해요.").font(font(14.0)).color(muted()));
                     }
                 }
             }
@@ -3633,7 +3627,7 @@ impl App {
                     };
                     ui.label(RichText::new(title).font(bold(32.0)).color(GOLD));
                     if let Some(u) = s.unit_finished {
-                        ui.label(RichText::new(format!("“{}” 단원을 모두 끝냈어요", UNITS[u].title)).font(font(16.0)).color(muted()));
+                        ui.label(RichText::new(format!("“{}” 단원을 모두 끝냈어요", UNITS[u].title)).font(font(15.0)).color(muted()));
                     }
                     ui.add_space(18.0);
                     ui.horizontal(|ui| {
@@ -3653,13 +3647,13 @@ impl App {
                             let inner = Rect::from_min_max(r.min + vec2(3.0, 32.0), r.max - vec2(3.0, 3.0));
                             p.rect_filled(inner, CornerRadius::same(12), surface());
                             p.text(Pos2::new(r.center().x, r.top() + 16.0), Align2::CENTER_CENTER, label, bold(14.0), WHITE);
-                            p.text(inner.center(), Align2::CENTER_CENTER, value, bold(26.0), ink(c, 0.85));
+                            p.text(inner.center(), Align2::CENTER_CENTER, value, bold(28.0), ink(c, 0.85));
                         }
                     });
                     ui.add_space(14.0);
                     if let Some(st) = s.streak_up {
                         ui.horizontal(|ui| {
-                            let g = ui.painter().layout_no_wrap(format!("{}일 연속 학습 중!", st), bold(18.0), ORANGE);
+                            let g = ui.painter().layout_no_wrap(format!("{}일 연속 학습 중!", st), bold(17.0), ORANGE);
                             let tw = g.size().x + 34.0;
                             ui.add_space(((ui.available_width() - tw) / 2.0).max(0.0));
                             let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
@@ -3690,7 +3684,7 @@ impl App {
                                         ui.label(RichText::new(format!("•  {}", line)).font(font(15.0)).color(fg()));
                                     }
                                     if s.missed.len() > 6 {
-                                        ui.label(RichText::new(format!("그 밖에 {}개 더", s.missed.len() - 6)).font(font(13.0)).color(muted()));
+                                        ui.label(RichText::new(format!("그 밖에 {}개 더", s.missed.len() - 6)).font(font(14.0)).color(muted()));
                                     }
                                 });
                             });
@@ -3769,7 +3763,7 @@ fn paint_pitch_compare(ui: &mut Ui, native: &[f32], mine: &[f32]) {
     p.rect_stroke(rect, CornerRadius::same(14), Stroke::new(1.2, border()), StrokeKind::Inside);
     let plot = rect.shrink2(vec2(14.0, 16.0));
     if mine.is_empty() || native.is_empty() {
-        let g = p.layout("목소리의 높낮이를 잘 잡지 못했어요. 조금 더 크게, 조용한 곳에서 다시 해 보세요".to_string(), font(12.5), muted(), rect.width() - 28.0);
+        let g = p.layout("목소리의 높낮이를 잘 잡지 못했어요. 조금 더 크게, 조용한 곳에서 다시 해 보세요".to_string(), font(12.0), muted(), rect.width() - 28.0);
         p.galley(rect.center() - g.size() / 2.0, g, muted());
         return;
     }
@@ -3792,7 +3786,7 @@ fn paint_pitch_compare(ui: &mut Ui, native: &[f32], mine: &[f32]) {
     };
     line(native, BLUE);
     line(mine, ORANGE);
-    p.text(rect.left_top() + vec2(18.0, 3.0), Align2::LEFT_TOP, "● 원어민", font(11.0), BLUE);
-    p.text(rect.left_top() + vec2(84.0, 3.0), Align2::LEFT_TOP, "● 내 소리", font(11.0), ORANGE);
-    p.text(rect.right_top() + vec2(-18.0, 3.0), Align2::RIGHT_TOP, "위쪽 = 높은 소리", font(11.0), muted());
+    p.text(rect.left_top() + vec2(18.0, 3.0), Align2::LEFT_TOP, "● 원어민", font(12.0), BLUE);
+    p.text(rect.left_top() + vec2(84.0, 3.0), Align2::LEFT_TOP, "● 내 소리", font(12.0), ORANGE);
+    p.text(rect.right_top() + vec2(-18.0, 3.0), Align2::RIGHT_TOP, "위쪽 = 높은 소리", font(12.0), muted());
 }
