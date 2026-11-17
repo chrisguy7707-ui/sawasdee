@@ -707,6 +707,17 @@ pub fn build(kind: LessonKind, rng: &mut Rng, ctx: &Ctx) -> Vec<Exercise> {
                 let c = pool[i];
                 let mut others: Vec<usize> = (0..pool.len()).filter(|&j| j != i && pool[j].name_pron != c.name_pron).collect();
                 rng.shuffle(&mut others);
+                // Several letters share one Korean name (e.g. ท and ถ): never show the same choice twice.
+                let mut seen = vec![format!("{}  ({})", c.name_pron, c.sound)];
+                others.retain(|&j| {
+                    let t = format!("{}  ({})", pool[j].name_pron, pool[j].sound);
+                    if seen.contains(&t) {
+                        false
+                    } else {
+                        seen.push(t);
+                        true
+                    }
+                });
                 let mut opts: Vec<usize> = vec![i];
                 opts.extend(others.into_iter().take(3));
                 rng.shuffle(&mut opts);
