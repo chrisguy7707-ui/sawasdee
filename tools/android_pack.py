@@ -35,10 +35,30 @@ def run(cmd, **kw):
     return r
 
 
+def prepare_libs(tmp):
+    """Libraries from android/libs (Google Play Billing, fetched by tools/fetch_billing_libs.py): the .aar files
+    are unpacked; returns their classes.jar files and compiled resources. Without Gradle, the matching
+    manifest entries are written by hand in android/pkg/AndroidManifest.xml."""
+    jars, res = [], []
+    for i, aar in enumerate(sorted(glob.glob(os.path.join(APP, "android", "libs", "*.aar")))):
+        d = os.path.join(tmp, f"aar{i}")
+        with zipfile.ZipFile(aar) as z:
+            z.extractall(d)
+        if os.path.exists(os.path.join(d, "classes.jar")):
+            jars.append(os.path.join(d, "classes.jar"))
+        if os.path.isdir(os.path.join(d, "res")) and os.listdir(os.path.join(d, "res")):
+            out = os.path.join(tmp, f"aarres{i}.zip")
+            run([AAPT2_PATH[0], "compile", "--dir", os.path.join(d, "res"), "-o", out])
+            res.append(out)
+    jars += sorted(glob.glob(os.path.join(APP, "android", "libs", "*.jar")))
+    return jars, res
+
+
+AAPT2_PATH = [None]
 BUNDLETOOL = os.environ.get("BUNDLETOOL", os.path.expanduser("~/android-dev/bundletool.jar"))
 
 
-def build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, pw):
+def build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, pw, extra_res=()):
     """Google Play takes an .aab (app bundle), not an .apk. Same code, different packaging:
     resources in protobuf form, laid out as a 'base' module, then bundletool + jarsigner."""
     if not os.path.exists(BUNDLETOOL):
@@ -48,7 +68,7 @@ def build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, p
     proto = os.path.join(tmp, "base_proto.apk")
     run([aapt2, "link", "--proto-format", "-o", proto, "-I", android_jar,
          "--manifest", os.path.join(APP, "android", "pkg", "AndroidManifest.xml"),
-         "-R", res_zip, "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
+         "-R", res_zip] + [x for r in extra_res for x in ("-R", r)] + ["--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
          "--version-code", str(version_code), "--version-name", version,
          "--compile-sdk-version-code", PLATFORM, "--compile-sdk-version-name", "16"])
     module = os.path.join(tmp, "base.zip")
@@ -81,6 +101,7 @@ def main():
         sys.exit("Android build-tools 36 not installed")
     bt = bt[-1]
     aapt2, zipalign, apksigner, d8 = (os.path.join(bt, n) for n in ("aapt2", "zipalign", "apksigner", "d8"))
+    AAPT2_PATH[0] = aapt2
     android_jar = os.path.join(SDK, "platforms", f"android-{PLATFORM}", "android.jar")
     javac = os.path.join(JAVA_HOME, "bin", "javac")
     so = os.path.join(APP, "target", "aarch64-linux-android", "release", "libsawasdee.so")
@@ -108,17 +129,18 @@ def main():
         res_zip = os.path.join(tmp, "res.zip")
         run([aapt2, "compile", "--dir", os.path.join(APP, "android", "res"), "-o", res_zip])
         base = os.path.join(tmp, "base.apk")
+        lib_jars, lib_res = prepare_libs(tmp)
         run([aapt2, "link", "-o", base, "-I", android_jar,
              "--manifest", os.path.join(APP, "android", "pkg", "AndroidManifest.xml"),
-             "-R", res_zip, "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
+             "-R", res_zip] + [x for r in lib_res for x in ("-R", r)] + ["--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
              "--version-code", str(version_code), "--version-name", version,
              "--compile-sdk-version-code", PLATFORM, "--compile-sdk-version-name", "16"])
         # 2. Java -> classes.dex
         classes = os.path.join(tmp, "classes")
         os.makedirs(classes)
         sources = glob.glob(os.path.join(APP, "android", "java", "**", "*.java"), recursive=True)
-        run([javac, "-source", "8", "-target", "8", "-bootclasspath", android_jar, "-Xlint:-options", "-d", classes] + sources)
-        class_files = glob.glob(os.path.join(classes, "**", "*.class"), recursive=True)
+        run([javac, "-source", "8", "-target", "8", "-bootclasspath", android_jar, "-classpath", os.pathsep.join(lib_jars) or ".", "-Xlint:-options", "-d", classes] + sources)
+        class_files = glob.glob(os.path.join(classes, "**", "*.class"), recursive=True) + lib_jars
         dex_dir = os.path.join(tmp, "dex")
         os.makedirs(dex_dir)
         run([d8, "--lib", android_jar, "--release", "--min-api", MIN_SDK, "--output", dex_dir] + class_files)
@@ -135,7 +157,7 @@ def main():
         if os.path.exists(final):
             os.remove(final)
         run([apksigner, "sign", "--ks", ks, "--ks-pass", "pass:" + pw, "--out", final, aligned])
-        build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, pw)
+        build_aab(tmp, aapt2, android_jar, version, version_code, dex_dir, so, ks, pw, lib_res)
         r = run([apksigner, "verify", "--print-certs", final])
         cert = [l for l in r.stdout.splitlines() if "SHA-256" in l]
         print(f"APK: {final}  ({os.path.getsize(final) / 1e6:.1f} MB, version {version}, code {version_code})")

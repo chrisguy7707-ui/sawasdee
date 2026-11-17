@@ -114,6 +114,36 @@ pub fn exit_app() {
     imp::exit_app();
 }
 
+// ------------------------------------------------------------ paid unlock (Google Play Billing)
+/// True only in the Google Play build (`--features play`), where units after the free ones need a purchase.
+pub fn paywall_enabled() -> bool {
+    cfg!(all(target_os = "android", feature = "play"))
+}
+/// Connects to Google Play and checks what the account owns (no sign-in or server of our own).
+pub fn billing_init() {
+    imp::billing_init();
+}
+/// "구매 복원": asks Google Play again which purchases the account owns.
+pub fn billing_refresh() {
+    imp::billing_refresh();
+}
+/// Opens Google Play's purchase sheet.
+pub fn billing_buy() {
+    imp::billing_buy();
+}
+/// 0 = not ready, 1 = can buy, 2 = owned, 3 = payment pending.
+pub fn billing_state() -> i32 {
+    imp::billing_state()
+}
+/// Price in the person's currency, "" until Google Play has answered.
+pub fn billing_price() -> String {
+    imp::billing_price()
+}
+/// A message to show once (purchase finished or failed), "" if none.
+pub fn billing_message() -> String {
+    imp::billing_message()
+}
+
 // ------------------------------------------------------------------------- iPhone
 #[cfg(target_os = "ios")]
 mod imp {
@@ -157,6 +187,19 @@ mod imp {
     pub fn font_scale() -> f32 {
         // SAFETY: plain function from main.m.
         unsafe { sawasdee_font_scale() }
+    }
+
+    pub fn billing_init() {}
+    pub fn billing_refresh() {}
+    pub fn billing_buy() {}
+    pub fn billing_state() -> i32 {
+        0
+    }
+    pub fn billing_price() -> String {
+        String::new()
+    }
+    pub fn billing_message() -> String {
+        String::new()
     }
     pub fn back_pressed() -> bool {
         false
@@ -273,6 +316,42 @@ mod imp {
     pub fn font_scale() -> f32 {
         with_class("com.sawasdee.thai.MainActivity", |env, act, cls| Ok(env.call_static_method(cls, "fontScale", "(Landroid/app/Activity;)F", &[JValue::Object(act)])?.f()?)).unwrap_or(1.0)
     }
+
+    pub fn billing_init() {
+        with_class("com.sawasdee.thai.Billing", |env, act, cls| {
+            env.call_static_method(cls, "init", "(Landroid/app/Activity;)V", &[JValue::Object(act)])?;
+            Ok(())
+        });
+    }
+    pub fn billing_refresh() {
+        with_class("com.sawasdee.thai.Billing", |env, act, cls| {
+            env.call_static_method(cls, "refresh", "(Landroid/app/Activity;)V", &[JValue::Object(act)])?;
+            Ok(())
+        });
+    }
+    pub fn billing_buy() {
+        with_class("com.sawasdee.thai.Billing", |env, act, cls| {
+            env.call_static_method(cls, "buy", "(Landroid/app/Activity;)V", &[JValue::Object(act)])?;
+            Ok(())
+        });
+    }
+    pub fn billing_state() -> i32 {
+        with_class("com.sawasdee.thai.Billing", |env, _act, cls| Ok(env.call_static_method(cls, "state", "()I", &[])?.i()?)).unwrap_or(0)
+    }
+    fn billing_text(name: &str) -> String {
+        with_class("com.sawasdee.thai.Billing", |env, _act, cls| {
+            let o = env.call_static_method(cls, name, "()Ljava/lang/String;", &[])?.l()?;
+            let s: String = env.get_string(&jni::objects::JString::from(o))?.into();
+            Ok(s)
+        })
+        .unwrap_or_default()
+    }
+    pub fn billing_price() -> String {
+        billing_text("price")
+    }
+    pub fn billing_message() -> String {
+        billing_text("takeMessage")
+    }
     pub fn back_pressed() -> bool {
         with_class("com.sawasdee.thai.MainActivity", |env, _act, cls| Ok(env.call_static_method(cls, "consumeBack", "()Z", &[])?.z()?)).unwrap_or(false)
     }
@@ -387,6 +466,19 @@ mod imp {
     }
     pub fn font_scale() -> f32 {
         1.0
+    }
+
+    pub fn billing_init() {}
+    pub fn billing_refresh() {}
+    pub fn billing_buy() {}
+    pub fn billing_state() -> i32 {
+        0
+    }
+    pub fn billing_price() -> String {
+        String::new()
+    }
+    pub fn billing_message() -> String {
+        String::new()
     }
     pub fn back_pressed() -> bool {
         false

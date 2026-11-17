@@ -20,8 +20,18 @@ if [ ! -f "$CARGO_APK_RELEASE_KEYSTORE" ] || [ -z "$CARGO_APK_RELEASE_KEYSTORE_P
 fi
 # 16 KB memory pages: Google Play requires native libraries to support them (Android 15+ devices).
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,-z,max-page-size=16384"
-cargo apk build --release --lib
+# "sh tools/build_android.sh play" = Google Play build: units after the free ones need the one-time purchase.
+# Without it (beta APK for friends, sideloaded) every unit is open, because purchases only work through Google Play.
+FEATURES=""
+if [ "$1" = "play" ]; then FEATURES="--features play"; fi
+cargo apk build --release --lib $FEATURES
 # cargo-apk made the native library; tools/android_pack.py builds the final APK around it
 # (own manifest, reminder Java code, alignment, signing).
 python3 "$APP_DIR/tools/android_pack.py"
-echo "APK: target/release/apk/Sawasdee.apk"
+if [ "$1" = "play" ]; then
+  mv target/release/apk/Sawasdee.apk target/release/apk/Sawasdee-play.apk
+  mv target/release/apk/Sawasdee.aab target/release/apk/Sawasdee-play.aab
+  echo "Play build: target/release/apk/Sawasdee-play.aab (upload this) and Sawasdee-play.apk (for testing)"
+else
+  echo "APK: target/release/apk/Sawasdee.apk"
+fi

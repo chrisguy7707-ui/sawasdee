@@ -20,6 +20,8 @@ use crate::lesson::{self, Body, Exercise, LessonKind, Rng};
 
 /// Right answers in a row that take a question out of the mistake notebook.
 const GRADUATE: u8 = 2;
+/// Google Play build: units 1..=FREE_UNITS are free, the rest need the one-time purchase.
+const FREE_UNITS: usize = 2;
 
 /// The app's version (from the project settings).
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -378,6 +380,13 @@ pub struct App {
     rec_mine: Vec<f32>,
     backup_pending: Option<Progress>,
     confirm_exit: bool,
+    /// Google Play build: the full unlock has been bought (asked from Play at every start)
+    owned: bool,
+    show_paywall: bool,
+    paywall_demo: bool,
+    buy_state: i32,
+    buy_price: String,
+    buy_poll: f64,
     theme_applied: bool,
     /// The opening (cover) screen, shown until the learner taps start.
     splash: bool,
@@ -479,6 +488,12 @@ impl App {
             rec_mine: Vec::new(),
             backup_pending: None,
             confirm_exit: false,
+            owned: false,
+            show_paywall: false,
+            paywall_demo: false,
+            buy_state: 0,
+            buy_price: String::new(),
+            buy_poll: -10.0,
             theme_applied: false,
             splash: false,
             splash_t0: None,
@@ -489,6 +504,9 @@ impl App {
         app.splash = (app.shot.is_none() && open.is_none()) || open.as_deref() == Some("splash");
         // Screenshots show the app as set up, unless the welcome screen is asked for.
         app.demo = open.is_some();
+        if notify::paywall_enabled() && open.is_none() {
+            notify::billing_init();
+        }
         if app.demo {
             // start from the top of every list, not where the last real session was scrolled to
             cc.egui_ctx.memory_mut(|m| m.data.clear());
@@ -564,6 +582,16 @@ impl App {
                     app.p.xp_total = 180;
                     app.p.xp_by_day.insert(today(), 15);
                     app.p.lessons_done = 7;
+                }
+                // the purchase offer on the path (units 1-2 done), to check the Google Play build's screens
+                "paywall-demo" => {
+                    app.p.done[0] = 5;
+                    app.p.done[1] = 5;
+                    app.p.last_day = today();
+                    app.paywall_demo = true;
+                    app.show_paywall = true;
+                    app.buy_state = 1;
+                    app.buy_price = "₩9,900".to_string();
                 }
                 "notebook" => {
                     app.tab = Tab::Notebook;
@@ -666,6 +694,76 @@ impl App {
             app.sync_reminder();
         }
         app
+    }
+
+    /// Units after the free ones stay closed in the Google Play build until the full unlock is bought.
+    fn paywall_locks(&self, unit: usize) -> bool {
+        notify::paywall_enabled() && (!self.demo || self.paywall_demo) && !self.owned && unit >= FREE_UNITS
+    }
+
+    /// Asks the Java side about the purchase twice a second (cheap) and shows its messages.
+    fn poll_billing(&mut self, ctx: &egui::Context, now: f64) {
+        if !notify::paywall_enabled() || self.paywall_demo || now - self.buy_poll < 0.5 {
+            return;
+        }
+        self.buy_poll = now;
+        self.buy_state = notify::billing_state();
+        self.owned = self.buy_state == 2;
+        if self.buy_price.is_empty() {
+            self.buy_price = notify::billing_price();
+        }
+        let m = notify::billing_message();
+        if !m.is_empty() {
+            self.toast(&m, now);
+            self.show_paywall = false;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
+    /// The window that offers the full unlock.
+    fn paywall_window(&mut self, ctx: &egui::Context, now: f64) {
+        if !self.show_paywall || self.owned {
+            return;
+        }
+        let mut close = false;
+        egui::Window::new("paywall")
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .fixed_size(vec2(ctx.content_rect().width().min(380.0) - 24.0, 0.0))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("전체 단원 열기").font(bold(22.0)));
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new(format!("단원 1~{}은 무료예요. 한 번만 결제하면 나머지 {}개 단원이 모두 열려요. 구독이 아니에요.", FREE_UNITS, UNITS.len() - FREE_UNITS)).font(font(15.0)));
+                ui.add_space(4.0);
+                ui.label(RichText::new("같은 구글 계정이면 앱을 다시 설치하거나 새 폰에서도 '구매 복원'으로 다시 열 수 있어요.").font(font(13.5)).color(muted()));
+                ui.add_space(10.0);
+                let label = match (self.buy_state, self.buy_price.is_empty()) {
+                    (3, _) => "결제 처리 중이에요".to_string(),
+                    (1, false) => format!("{} 결제하고 열기", self.buy_price),
+                    _ => "결제 정보를 불러오는 중…".to_string(),
+                };
+                if button3d(ui, &label, vec2(ui.available_width(), 52.0), PRIMARY, self.buy_state == 1).clicked() {
+                    notify::billing_buy();
+                }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if outline_button(ui, "구매 복원", vec2(140.0, 44.0), fg()).clicked() {
+                        notify::billing_refresh();
+                        self.toast("구글 플레이에서 구매 내역을 확인하고 있어요", now);
+                    }
+                    if outline_button(ui, "닫기", vec2(100.0, 44.0), fg()).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if close {
+            self.show_paywall = false;
+        }
     }
 
     fn toast(&mut self, text: &str, now: f64) {
@@ -773,6 +871,7 @@ impl eframe::App for App {
             self.theme_applied = true;
         }
         self.handle_shot(&ctx);
+        self.poll_billing(&ctx, now);
         // Make sure the window really is the portrait (phone) size at the start.
         self.frames += 1;
         if self.frames <= 3 {
@@ -938,6 +1037,7 @@ impl App {
     }
 
     fn paint_toast(&mut self, ctx: &egui::Context, now: f64) {
+        self.paywall_window(ctx, now);
         let Some((text, t0)) = self.toast.clone() else { return };
         let age = now - t0;
         if age > 3.0 {
@@ -1449,7 +1549,8 @@ impl App {
                 // banner
                 let (row, _) = ui.allocate_exact_size(vec2(full, 92.0), Sense::hover());
                 let banner = Rect::from_min_size(Pos2::new(left, row.top()), vec2(col_w, 88.0));
-                let unlocked = self.p.done[u] > 0 || current.map(|c| c.0 == u).unwrap_or(false) || u == 0;
+                let paid_locked = self.paywall_locks(u);
+                let unlocked = !paid_locked && (self.p.done[u] > 0 || current.map(|c| c.0 == u).unwrap_or(false) || u == 0);
                 let bc = if unlocked { color } else { faint() };
                 let p = ui.painter();
                 soft_shadow(p, banner, CornerRadius::same(22), 1.2);
@@ -1469,7 +1570,7 @@ impl App {
                 p.text(
                     banner.right_top() + vec2(-22.0, 16.0),
                     Align2::RIGHT_TOP,
-                    format!("{}/{}", doneu, LESSONS_PER_UNIT),
+                    if paid_locked { "전체 열기".to_string() } else { format!("{}/{}", doneu, LESSONS_PER_UNIT) },
                     bold(13.0),
                     Color32::from_white_alpha(225),
                 );
@@ -1480,7 +1581,9 @@ impl App {
                 for l in 0..LESSONS_PER_UNIT {
                     let (row, _) = ui.allocate_exact_size(vec2(full, 100.0), Sense::hover());
                     let c = Pos2::new(left + col_w / 2.0 + sign * offsets[l], row.center().y);
-                    let state = if l < doneu {
+                    let state = if paid_locked {
+                        0
+                    } else if l < doneu {
                         1
                     } else if current == Some((u, l)) {
                         2
@@ -1571,18 +1674,22 @@ impl App {
                         p.galley(br.center() - g.size() / 2.0, g, color);
                     }
                     // mascot beside the path
-                    if l == 2 && (state != 0 || u == 0) {
+                    if l == 2 && (state != 0 || (u == 0 && !paid_locked)) {
                         let mc = Pos2::new(left + col_w / 2.0 - sign * 150.0, row.center().y + 10.0);
                         paint_mascot(p, mc, 34.0, state == 1);
                     }
                     let hover = if review { "단원 복습 · +20 XP" } else { "레슨 · +10 XP" };
-                    let resp = if state != 0 {
+                    let resp = if paid_locked {
+                        resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("전체 단원 열기")
+                    } else if state != 0 {
                         resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(format!("{} {}/{} · {}", unit.title, l + 1, LESSONS_PER_UNIT, hover))
                     } else {
                         resp.on_hover_text("앞의 레슨을 먼저 끝내세요")
                     };
                     if resp.clicked() {
-                        if state == 0 {
+                        if paid_locked {
+                            self.show_paywall = true;
+                        } else if state == 0 {
                             locked_click = true;
                         } else {
                             start = Some((u, l));
@@ -1886,6 +1993,25 @@ impl App {
                 self.sync_reminder();
             }
         });
+        if notify::paywall_enabled() {
+            egui::CollapsingHeader::new(RichText::new("전체 단원 · 구매 복원").font(bold(17.0))).show(ui, |ui| {
+                ui.set_width(col_w - 40.0);
+                if self.owned {
+                    ui.label(RichText::new("전체 단원이 열려 있어요. 구매해 주셔서 감사해요!").font(font(14.0)));
+                } else {
+                    ui.label(RichText::new(format!("단원 1~{}은 무료예요. 한 번 결제하면 모든 단원이 열려요(구독 아님).", FREE_UNITS)).font(font(13.5)).color(muted()));
+                    if button3d(ui, "전체 단원 열기", vec2(220.0, 46.0), PRIMARY, true).clicked() {
+                        self.show_paywall = true;
+                    }
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new("앱을 다시 설치했거나 새 폰이라면, 구매할 때 쓴 구글 계정으로 로그인한 상태에서 아래 버튼을 눌러 주세요.").font(font(13.5)).color(muted()));
+                if outline_button(ui, "구매 복원", vec2(200.0, 44.0), fg()).clicked() {
+                    notify::billing_refresh();
+                    self.toast("구글 플레이에서 구매 내역을 확인하고 있어요", now);
+                }
+            });
+        }
         egui::CollapsingHeader::new(RichText::new("학습 기록 백업").font(bold(17.0))).show(ui, |ui| {
             ui.set_width(col_w - 40.0);
             ui.label(RichText::new("폰을 바꾸거나 앱을 다시 설치하기 전에 백업 코드를 복사해 메모 앱이나 메시지(나에게 보내기)에 붙여 두세요. 새 기기에서 코드를 복사한 뒤 '불러오기'를 누르면 기록이 돌아와요. 코드는 이 기기 밖으로 자동 전송되지 않아요.").font(font(13.5)).color(muted()));
