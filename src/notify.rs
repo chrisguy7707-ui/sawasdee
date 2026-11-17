@@ -99,6 +99,12 @@ pub fn font_scale() -> f32 {
     imp::font_scale().clamp(1.0, 2.0)
 }
 
+/// A demo screen to open, given when the app is launched for store pictures
+/// (Android: intent extra `sawasdee_open`; iPhone: launch argument `--open <screen>`). None normally.
+pub fn launch_open() -> Option<String> {
+    imp::launch_open().filter(|s| !s.is_empty())
+}
+
 /// True once each time the Back button/gesture was used (Android only).
 pub fn back_pressed() -> bool {
     imp::back_pressed()
@@ -144,6 +150,10 @@ mod imp {
         }
     }
 
+    pub fn launch_open() -> Option<String> {
+        let args: Vec<String> = std::env::args().collect();
+        args.iter().position(|a| a == "--open").and_then(|i| args.get(i + 1).cloned())
+    }
     pub fn font_scale() -> f32 {
         // SAFETY: plain function from main.m.
         unsafe { sawasdee_font_scale() }
@@ -253,6 +263,13 @@ mod imp {
         result.ok()
     }
 
+    pub fn launch_open() -> Option<String> {
+        with_class("com.sawasdee.thai.MainActivity", |env, act, cls| {
+            let o = env.call_static_method(cls, "openArg", "(Landroid/app/Activity;)Ljava/lang/String;", &[JValue::Object(act)])?.l()?;
+            let s: String = env.get_string(&jni::objects::JString::from(o))?.into();
+            Ok(s)
+        })
+    }
     pub fn font_scale() -> f32 {
         with_class("com.sawasdee.thai.MainActivity", |env, act, cls| Ok(env.call_static_method(cls, "fontScale", "(Landroid/app/Activity;)F", &[JValue::Object(act)])?.f()?)).unwrap_or(1.0)
     }
@@ -365,6 +382,9 @@ pub use imp::init as init_android;
 // ---------------------------------------------------------------------- computers
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod imp {
+    pub fn launch_open() -> Option<String> {
+        None
+    }
     pub fn font_scale() -> f32 {
         1.0
     }

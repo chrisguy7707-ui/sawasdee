@@ -104,7 +104,7 @@ fn android_main(android_app: winit::platform::android::activity::AndroidApp) {
     let _ = eframe::run_native(
         "sawasdee-thai",
         options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc, None, None)))),
+        Box::new(|cc| Ok(Box::new(app::App::new(cc, None, notify::launch_open())))),
     );
 }
 
@@ -148,7 +148,7 @@ pub extern "C" fn sawasdee_ios_main() {
     let result = eframe::run_native(
         "sawasdee-thai",
         options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc, None, None)))),
+        Box::new(|cc| Ok(Box::new(app::App::new(cc, None, notify::launch_open())))),
     );
     dlog(&format!("run_native returned: {:?}", result.as_ref().map(|_| "Ok")));
     if let Err(e) = result {

@@ -369,6 +369,8 @@ pub struct App {
     rec: RecUi,
     rec_key: usize,
     back_polled: f64,
+    /// Opened on a demo screen: nothing is saved.
+    demo: bool,
     scale_polled: f64,
     zoom: f32,
     /// Pitch shapes (semitones, 60 points) of the native clip and of the learner's recording.
@@ -470,6 +472,7 @@ impl App {
             rec: RecUi::Idle,
             rec_key: usize::MAX,
             back_polled: 0.0,
+            demo: false,
             scale_polled: -10.0,
             zoom: -1.0, // unknown yet: the first check sets it (a zoom saved by an older session is not trusted)
             rec_native: Vec::new(),
@@ -483,9 +486,14 @@ impl App {
             icon_mode: open.as_deref() == Some("icon"),
             force_narrow: open.as_deref().map(|o| o.starts_with("phone")).unwrap_or(false),
         };
-        app.splash = app.shot.is_none() || open.as_deref() == Some("splash");
+        app.splash = (app.shot.is_none() && open.is_none()) || open.as_deref() == Some("splash");
         // Screenshots show the app as set up, unless the welcome screen is asked for.
-        if app.shot.is_some() && open.as_deref() != Some("welcome") {
+        app.demo = open.is_some();
+        if app.demo {
+            // start from the top of every list, not where the last real session was scrolled to
+            cc.egui_ctx.memory_mut(|m| m.data.clear());
+        }
+        if (app.shot.is_some() || app.demo) && open.as_deref() != Some("welcome") && app.p.gender == 0 {
             app.p.gender = 1;
         }
         // Demo states, used for checking screens.
@@ -544,6 +552,19 @@ impl App {
                     }
                 }
                 "profile" => app.tab = Tab::Profile,
+                // the learning path with a little progress, for store pictures
+                "learn-demo" => {
+                    app.p = Progress { gender: app.p.gender, theme: app.p.theme, ..Progress::default() };
+                    app.p.fix();
+                    app.p.done[0] = 5;
+                    app.p.done[1] = 2;
+                    app.p.streak = 4;
+                    app.p.best_streak = 4;
+                    app.p.last_day = today();
+                    app.p.xp_total = 180;
+                    app.p.xp_by_day.insert(today(), 15);
+                    app.p.lessons_done = 7;
+                }
                 "notebook" => {
                     app.tab = Tab::Notebook;
                     app.p.done[0] = 2;
@@ -855,7 +876,8 @@ impl eframe::App for App {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if self.shot.is_none() {
+        // demo screens (test and store pictures) must never overwrite the learner's real record
+        if self.shot.is_none() && !self.demo {
             self.p.muted = self.audio.muted;
             eframe::set_value(storage, STORE_KEY, &self.p);
         }
@@ -866,7 +888,7 @@ impl eframe::App for App {
     }
 
     fn persist_egui_memory(&self) -> bool {
-        self.shot.is_none()
+        self.shot.is_none() && !self.demo
     }
 
     fn clear_color(&self, _v: &egui::Visuals) -> [f32; 4] {
@@ -3106,7 +3128,9 @@ impl App {
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
                             ui.add(egui::Label::new(RichText::new(&pr.th).font(bold(th_size)).color(fg())).wrap_mode(if text_size(ui, &pr.th, bold(th_size)).x <= budget { egui::TextWrapMode::Extend } else { egui::TextWrapMode::Wrap }));
-                            ui.label(RichText::new(&pr.pron).font(font(15.0)).color(muted()));
+                            if !pr.pron.is_empty() {
+                                ui.label(RichText::new(&pr.pron).font(font(15.0)).color(muted()));
+                            }
                             if !pr.tones.is_empty() {
                                 ui.label(RichText::new(format!("성조  {}", pr.tones)).font(bold(15.0)).color(TONE))
                                     .on_hover_text("→ 평성   ↓ 저성   ↘ 하강   ↑ 고성   ↗ 상승");

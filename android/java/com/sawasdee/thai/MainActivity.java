@@ -47,6 +47,13 @@ public class MainActivity extends NativeActivity {
         }
     }
 
+    /** A demo screen to open (store pictures): `adb shell am start ... -e sawasdee_open <screen>`. Empty normally. */
+    public static String openArg(Activity a) {
+        android.content.Intent i = a.getIntent();
+        String s = i == null ? null : i.getStringExtra("sawasdee_open");
+        return s == null ? "" : s;
+    }
+
     /** True once per Back press. */
     public static boolean consumeBack() {
         boolean b = back;

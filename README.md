@@ -5,7 +5,7 @@
 > **시험 단계입니다.** 음성은 AI 합성(Google Cloud Chirp 3 HD)이고, 단어·문장·한글 발음·성조는 태국어 원어민의 검수를 아직 받지 않았습니다. 틀린 곳을 발견하면 이슈로 알려 주세요.
 
 ## 안드로이드 시험 설치
-[릴리스 페이지](https://github.com/chrisguy7707-ui/sawasdee/releases/latest)에서 `Sawasdee.apk`를 내려받아 설치하세요(안드로이드 8.0 이상, "출처 불명 앱 설치" 허용 필요). 자세한 시험 안내와 설문은 [docs/BETA.md](docs/BETA.md).
+[릴리스 페이지](https://github.com/chrisguy7707-ui/sawasdee/releases/latest)에서 `Sawasdee.apk`를 내려받아 설치하세요(안드로이드 8.0 이상, "출처 불명 앱 설치" 허용 필요). 자세한 시험 안내와 설문은 [docs/BETA.md](docs/BETA.md), 바뀐 점은 [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## 들어 있는 것
 - 34개 단원, 단어 510개, 문장 370여 개, 짧은 대화 연습
